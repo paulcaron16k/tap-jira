@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import time
 import threading
 import re
+import json
 from requests.exceptions import (HTTPError, Timeout)
 from requests.auth import HTTPBasicAuth
 import requests
@@ -164,6 +165,7 @@ class Client():
         self.user_agent = config.get("user_agent")
         self.login_timer = None
         self.timeout = get_request_timeout(config)
+        self.config_path = config_path
 
         # Assign False for cloud Jira instance
         self.is_on_prem_instance = False
@@ -249,29 +251,36 @@ class Client():
 
     # backoff for Timeout error is already included in "Exception"
     # as it's a parent class of "Timeout" error
-    @backoff.on_exception(backoff.expo, Exception, max_tries=3)
+    @backoff.on_exception(backoff.expo, Exception, max_tries=3, factor=5)
     def refresh_credentials(self):
         body = {"grant_type": "refresh_token",
                 "client_id": self.oauth_client_id,
                 "client_secret": self.oauth_client_secret,
                 "refresh_token": self.refresh_token}
+        token_valid = False
         try:
             resp = self.session.post(
                 "https://auth.atlassian.com/oauth/token",
                 data=body,
                 timeout=self.timeout)
             resp.raise_for_status()
+            token_valid = True
             self.access_token = resp.json()['access_token']
+            self.refresh_token = resp.json()['refresh_token']
+            self._write_config()
         except Exception as ex:
             error_message = str(ex)
             if resp:
                 error_message = error_message + ", Response from Jira: {}".format(resp.text)
             raise Exception(error_message) from ex
         finally:
-            LOGGER.info("Starting new login timer")
-            self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
-                                               self.refresh_credentials)
-            self.login_timer.start()
+            if token_valid:
+                LOGGER.info("Starting new login timer")
+                self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
+                        self.refresh_credentials)
+                self.login_timer.start()
+            else:
+                LOGGER.error("Invalid OAuth token. Failed to refresh credentials.")
 
     def test_credentials_are_authorized(self):
         # Assume that everyone has issues, so we try and hit that endpoint
@@ -283,6 +292,24 @@ class Client():
         # Here, we are retrieving serverInfo for the Jira instance by which credentials will also be verified.
         # Assign True value to is_on_prem_instance property for on-prem Jira instance
         self.is_on_prem_instance = self.request("users","GET","/rest/api/2/serverInfo").get('deploymentType') == "Server"
+
+    def _write_config(self):
+        LOGGER.info("Credentials Refreshed")
+
+        # Update config at config_path
+        with open(self.config_path) as file:
+            config = json.load(file)
+
+        config['refresh_token'] = self.refresh_token
+        config['access_token'] = self.access_token
+
+        with open(self.config_path, 'w') as file:
+            json.dump(config, file, indent=2)
+
+        # store the refreshed config in disk
+        with open('local_storage.json', 'w') as file:
+            LOGGER.info(f"Save refreshed credentials file {file}")
+            json.dump(config, file, indent=2)
 
 class Paginator():
     def __init__(self, client, page_num=0, order_by=None, items_key="values"):
