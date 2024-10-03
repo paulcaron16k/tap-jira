@@ -158,7 +158,7 @@ def get_request_timeout(config):
     return request_timeout
 
 class Client():
-    def __init__(self, config):
+    def __init__(self, config, config_path = './', dev_mode = False):
         self.is_cloud = 'oauth_client_id' in config.keys()
         self.session = requests.Session()
         self.next_request_at = datetime.now()
@@ -249,6 +249,10 @@ class Client():
         check_status(response)
         return response.json()
 
+    def __refresh_credentials_timeout(self):
+        self.login_timer = None
+        self.refresh_credentials();
+
     # backoff for Timeout error is already included in "Exception"
     # as it's a parent class of "Timeout" error
     @backoff.on_exception(backoff.expo, Exception, max_tries=3, factor=5)
@@ -275,10 +279,14 @@ class Client():
             raise Exception(error_message) from ex
         finally:
             if token_valid:
-                LOGGER.info("Starting new login timer")
-                self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
-                        self.refresh_credentials)
-                self.login_timer.start()
+                if not self.login_timer:
+                    LOGGER.info("Starting new login timer")
+                    self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
+                            self.__refresh_credentials_timeout)
+                    self.login_timer.start()
+                else:
+                    LOGGER.info("login timer already running")
+
             else:
                 LOGGER.error("Invalid OAuth token. Failed to refresh credentials.")
 

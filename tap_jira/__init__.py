@@ -113,10 +113,13 @@ def sync():
 @singer.utils.handle_top_exception(LOGGER)
 def main():
     args = get_args()
+    if args.dev:
+        LOGGER.warning("Executing Tap in Dev mode")
+    LOGGER.info(f"Tap args {json.dumps(args)}")
 
     jira_config = args.config
     # jira client instance
-    jira_client = Client(jira_config)
+    jira_client = Client(jira_config, args.config_path, args.dev)
 
     # Setup Context
     Context.client = jira_client
