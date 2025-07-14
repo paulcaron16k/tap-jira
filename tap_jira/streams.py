@@ -385,6 +385,120 @@ class Worklogs(Stream):
                 break
 
 
+class Boards(Stream):
+    endpoint = "/rest/agile/1.0/board"
+    paginate = True
+    tap_stream_id = "boards"
+    key_properties = ["id"]
+
+
+class IssueBoard(Stream):
+    endpoint = "/rest/agile/1.0/board/{}/issue"
+    paginate = True
+    params = {"expand": "sprint,epic,project,created,updated"}
+    tap_stream_id = "issue_board"
+    key_properties = ["id"]
+
+    def sync(self, client, config, state, **kwargs):
+        record = kwargs.get('record', {})
+        fendpoint = self.endpoint.format(record['id'])
+
+        # custom state handling to keep track of board issues
+        bookmark_id = str(record['id'])
+        bookmark = singer.get_bookmark(
+            state, self.tap_stream_id, bookmark_id, {})
+
+        offset = 0
+        start_dt = bookmark.get(self.replication_key, config['start_date'])
+        start_dt = utils.strptime_to_utc(start_dt)
+
+        timezone = config.get('timezone', 'UTC')
+        start_date = start_dt.astimezone(
+            pytz.timezone(timezone)).strftime("%Y-%m-%d %H:%M")
+
+        self.params['jql'] = "updated >= '{}' order by updated asc".format(
+            start_date)
+
+        max_updated = start_dt
+        for page, cursor in client.fetch_pages(
+                self.tap_stream_id, fendpoint,
+                items_key="issues",
+                startAt=offset,
+                params=self.params
+        ):
+            for entry in page:
+                entry['boardId'] = record['id']
+                updated_at = deep_get(entry, self.replication_key)
+                updated_at = utils.strptime_to_utc(updated_at)
+                if updated_at and updated_at > max_updated:
+                    max_updated = updated_at
+
+            state = singer.write_bookmark(state, self.tap_stream_id, bookmark_id, {
+                self.replication_key: max_updated.strftime(
+                    utils.DATETIME_PARSE)
+            })
+
+            singer.write_state(state)
+            yield page, cursor
+
+
+class ProjectBoard(Stream):
+    endpoint = "/rest/agile/1.0/board/{}/project"
+    paginate = True
+    tap_stream_id = "project_board"
+    key_properties = ["id"]
+
+    def sync(self, client, config, state, **kwargs):
+        record = kwargs.get('record', {})
+        fendpoint = self.endpoint.format(record['id'])
+        for page, cursor in client.fetch_pages(self.tap_stream_id, fendpoint):
+            for entry in page:
+                entry['boardId'] = record['id']
+            yield page, cursor
+
+
+class Epics(Stream):
+    endpoint = "/rest/agile/1.0/board/{}/epic"
+    paginate = True
+    tap_stream_id = "epics"
+    key_properties = ["id"]
+
+    def sync(self, client, config, state, **kwargs):
+        record = kwargs.get('record', {})
+        fendpoint = self.endpoint.format(record['id'])
+        for page, cursor in client.fetch_pages(self.tap_stream_id, fendpoint):
+            for entry in page:
+                entry['boardId'] = record['id']
+            yield page, cursor
+
+
+class Sprints(Stream):
+    endpoint = "/rest/agile/1.0/board/{}/sprint"
+    paginate = True
+    tap_stream_id = "sprints"
+    key_properties = ["id"]
+
+    def sync(self, client, config, state, **kwargs):
+        record = kwargs.get('record', {})
+        fendpoint = self.endpoint.format(record['id'])
+        try:
+            for page, cursor in client.fetch_pages(
+                    self.tap_stream_id, fendpoint):
+                for entry in page:
+                    entry['boardId'] = record['id']
+                yield page, cursor
+        # Not every board supports sprints
+        except requests.exceptions.HTTPError as http_error:
+            if http_error.response.status_code == 400:
+                LOGGER.info(
+                    "Could not find sprint for board \"%s\", skipping", record['id'])
+                yield [], 0
+            else:
+                raise http_error
+
+
+
+# Definition: DerivedFromStreamClass(stream_name (e.g. id), pk_fields[], indirect_stream=False, path=None)
 VERSIONS = Stream("versions", ["id"], indirect_stream=True)
 COMPONENTS = Stream("components", ["id"], indirect_stream=True)
 ISSUES = Issues("issues", ["id"])
@@ -393,6 +507,14 @@ ISSUE_TRANSITIONS = Stream("issue_transitions", ["id","issueId"], # Composite pr
                            indirect_stream=True)
 PROJECTS = Projects("projects", ["id"])
 CHANGELOGS = Stream("changelogs", ["id"], indirect_stream=True)
+WORKLOGS = Worklogs("worklogs", ["id"])
+
+# Agile API streams
+BOARDS = Boards("boards", ["id"])
+ISSUEBOARD = IssueBoard("issue_board", ["id"], indirect_stream=True)
+PROJECTBOARD = ProjectBoard("project_board", ["id"], indirect_stream=True)
+EPICS = Epics("epics", ["id"], indirect_stream=True)
+SPRINTS = Sprints("sprints", ["id"], indirect_stream=True)
 
 ALL_STREAMS = [
     PROJECTS,
@@ -407,7 +529,12 @@ ALL_STREAMS = [
     ISSUE_COMMENTS,
     CHANGELOGS,
     ISSUE_TRANSITIONS,
-    Worklogs("worklogs", ["id"]),
+    WORKLOGS,
+    BOARDS,
+    ISSUEBOARD,
+    PROJECTBOARD,
+    EPICS,
+    SPRINTS,
 ]
 
 ALL_STREAM_IDS = [s.tap_stream_id for s in ALL_STREAMS]

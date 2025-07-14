@@ -9,6 +9,11 @@ This tap:
 - Pulls raw data from the [JIRA Cloud REST
   API](https://docs.atlassian.com/jira/REST/cloud/#api/2/)
 - Extracts the following resources:
+  - [`boards`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-other-operations/#api-agile-1-0-board-get)
+  - [`issue_board`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-issue-get)
+  - [`project_board`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-project-get)
+  - [`epics`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-epic-get)
+  - [`sprints`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-sprint-get)
   - [`projects`](https://docs.atlassian.com/jira/REST/cloud/#api/2/project-getAllProjects)
   - [`versions`](https://docs.atlassian.com/jira/REST/cloud/#api/2/project-getProjectVersionsPaginated)
   - [`project_types`](https://docs.atlassian.com/jira/REST/cloud/#api/2/project/type-getAllProjectTypes)
@@ -36,13 +41,12 @@ This tap:
 
    ```json
     {
-        "start_date": "2010-01-01",
-        "username": "your-jira-username",
-        "password": "your-jira-password",
-        "base_url": "https://your-jira-domain",
+         "start_date": "<i.e. 2017-12-04T19:19:32Z>",
+        "username": "<your-jira-username>",
+        "password": "<your-jira-password>",
+        "base_url": "<https://your-jira-domain>",
         "user_agent": "<user-agent>",
-        "request_timeout": 300,
-        "groups": "jira-administrators, site-admins, jira-software-users"
+        "timezone": "<i.e. America/New_York>"
     }
     ```
 
@@ -57,8 +61,7 @@ This tap:
      "cloud_id": "<cloud-id>",
      "refresh_token": "<refresh-token>",
      "start_date": "<i.e. 2017-12-04T19:19:32Z>",
-     "request_timeout": 300,
-     "groups": "jira-administrators, site-admins, jira-software-users"
+     "timezone": "<i.e. America/New_York>"
    }
    ```
 
@@ -70,6 +73,8 @@ This tap:
    `https://mycompany.atlassian.net`.
 
    The `groups` specifies groups for users stream. It is an optional parameter. Default value is `["jira-administrators", "jira-software-users", "jira-core-users", "jira-users", "users"]`.
+   `timezone` adjusts dates and timestamps used to incrementally load JIRA data 
+   to the timezone specified. It defaults to `UTC`.
 
 4. Run the Tap in Discovery Mode
 
