@@ -115,7 +115,8 @@ def main():
     args = get_args()
     if args.dev:
         LOGGER.warning("Executing Tap in Dev mode")
-    LOGGER.info(f"Tap args {json.dumps(args)}")
+        # Dump config, properties, and streams selected
+        LOGGER.debug(f"Tap args {json.dumps(vars(args))}")
 
     jira_config = args.config
     # jira client instance
