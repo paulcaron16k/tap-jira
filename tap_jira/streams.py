@@ -312,7 +312,7 @@ class Issues(Stream):
                   "validateQuery": "strict",
                   "jql": jql}
         next_page_token = Context.bookmark(page_token_offset) or None
-        pager = PaginatorToken(Context.client, items_key="issues", next_page_token=next_page_token)
+        pager = PaginatorToken(Context.client, items_key="issues", token=next_page_token)
         for page in pager.pages(self.tap_stream_id,
                                 "POST", "/rest/api/3/search/jql",
                                 params=params):
@@ -335,9 +335,9 @@ class Issues(Stream):
 
             self.write_page(page)
 
-            Context.set_bookmark(page_num_offset, pager.next_page_num)
+            Context.set_bookmark(page_token_offset, pager.next_page_token)
             singer.write_state(Context.state)
-        Context.set_bookmark(page_num_offset, None)
+        Context.set_bookmark(page_token_offset, None)
         Context.set_bookmark(updated_bookmark, last_updated)
         singer.write_state(Context.state)
 
