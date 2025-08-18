@@ -6,7 +6,7 @@ import dateparser
 from singer import metrics, utils, metadata, Transformer
 from singer.transform import SchemaMismatch
 from dateutil.parser._parser import ParserError
-from .http import Paginator,JiraNotFoundError
+from .http import Paginator, PaginatorToken, JiraNotFoundError
 from .context import Context
 
 DEFAULT_PAGE_SIZE = 50
@@ -298,7 +298,7 @@ class Issues(Stream):
 
     def sync(self):
         updated_bookmark = [self.tap_stream_id, "updated"]
-        page_num_offset = [self.tap_stream_id, "offset", "page_num"]
+        page_token_offset = [self.tap_stream_id, "offset", "page_token"]
 
         last_updated = Context.update_start_date_bookmark(updated_bookmark)
         timezone = Context.retrieve_timezone()
@@ -306,13 +306,15 @@ class Issues(Stream):
 
         jql = "updated >= '{}' order by updated asc".format(start_date)
         params = {"fields": "*all",
+                  # "fieldsByKeys": true,                     # TODO Test this out
+                  # "expand": "changelog,transitions,names",  # TODO Test this out
                   "expand": "changelog,transitions",
                   "validateQuery": "strict",
                   "jql": jql}
-        page_num = Context.bookmark(page_num_offset) or 0
-        pager = Paginator(Context.client, items_key="issues", page_num=page_num)
+        next_page_token = Context.bookmark(page_token_offset) or None
+        pager = PaginatorToken(Context.client, items_key="issues", next_page_token=next_page_token)
         for page in pager.pages(self.tap_stream_id,
-                                "GET", "/rest/api/2/search",
+                                "POST", "/rest/api/3/search/jql",
                                 params=params):
             # sync comments and changelogs for each issue
             sync_sub_streams(page)

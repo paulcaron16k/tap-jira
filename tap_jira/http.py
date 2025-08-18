@@ -158,7 +158,7 @@ def get_request_timeout(config):
     return request_timeout
 
 class Client():
-    def __init__(self, config, config_path = './', dev_mode = False):
+    def __init__(self, config, config_path='./', dev_mode=False):
         self.is_cloud = 'oauth_client_id' in config.keys()
         self.session = requests.Session()
         self.next_request_at = datetime.now()
@@ -251,7 +251,7 @@ class Client():
 
     def __refresh_credentials_timeout(self):
         self.login_timer = None
-        self.refresh_credentials();
+        self.refresh_credentials()
 
     # backoff for Timeout error is already included in "Exception"
     # as it's a parent class of "Timeout" error
@@ -282,7 +282,7 @@ class Client():
                 if not self.login_timer:
                     LOGGER.info("Starting new login timer")
                     self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
-                            self.__refresh_credentials_timeout)
+                                                       self.__refresh_credentials_timeout)
                     self.login_timer.start()
                 else:
                     LOGGER.info("login timer already running")
@@ -356,6 +356,42 @@ class Paginator():
                 self.next_page_num = None
             else:
                 self.next_page_num += max_results
+
+            if page:
+                yield page
+
+
+class PaginatorToken():
+    def __init__(self, client, token=None, items_key="values"):
+        self.client = client
+        self.next_page_token = token
+        self.items_key = items_key
+
+    def pages(self, *args, **kwargs):
+        """Returns a generator which yields pages of data. When a given page is
+        yielded, the nextPageToken property can be used to know what the index
+        of the next page is (its not clear if this is useful for bookmarking).
+
+        :param args: Passed to Client.request
+        :param kwargs: Passed to Client.request
+        """
+        params = kwargs.pop("params", {}).copy()
+        next_page_token = self.next_page_token
+        done = False
+        while not done:
+            if next_page_token:
+                params["nextPageToken"] = next_page_token
+            response = self.client.request(*args, params=params, **kwargs)
+            if self.items_key:
+                page = response[self.items_key]
+            else:
+                page = response
+
+            if 'nextPageToken' in response:
+                next_page_token = response['nextPageToken']
+            else:
+                next_page_token = None
+                done = True
 
             if page:
                 yield page
