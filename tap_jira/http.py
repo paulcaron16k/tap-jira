@@ -51,6 +51,9 @@ class JiraBadGatewayError(JiraError):
 class JiraConflictError(JiraError):
     pass
 
+class JiraInvalidContentType(JiraError):
+    pass
+
 class JiraNotFoundError(JiraError):
     pass
 
@@ -97,6 +100,10 @@ ERROR_CODE_EXCEPTION_MAPPING = {
     409: {
         "raise_exception": JiraConflictError,
         "message": "The request does not match our state in some way."
+    },
+    415: {
+        "raise_exception": JiraInvalidContentType,
+        "message": "The request method, content-type and query-string vs JSON body does not match."
     },
     429: {
         "raise_exception": JiraRateLimitError,
@@ -292,8 +299,12 @@ class Client():
 
     def test_credentials_are_authorized(self):
         # Assume that everyone has issues, so we try and hit that endpoint
-        self.request("issues", "GET", "/rest/api/2/search",
-                     params={"maxResults": 1})
+        self.request("issues", "GET", "/rest/api/3/search",
+                     params={
+                         "maxResults": 1,
+                         "jql": "updated >= '2000-01-01 00:00' order by updated asc",
+                     }
+        )
 
     def test_basic_credentials_are_authorized(self):
         # Make a call to myself endpoint for verify creds
@@ -375,13 +386,24 @@ class PaginatorToken():
         :param args: Passed to Client.request
         :param kwargs: Passed to Client.request
         """
-        params = kwargs.pop("params", {}).copy()
+        params = None
+        json_vars = None
+        if "json" in kwargs:
+            json_vars = kwargs.pop("json", {}).copy()       # POST JSON body
+        else:
+            params = kwargs.pop("params", {}).copy()        # GET query string
+
         next_page_token = self.next_page_token
         done = False
         while not done:
             if next_page_token:
-                params["nextPageToken"] = next_page_token
-            response = self.client.request(*args, params=params, **kwargs)
+                if json_vars:
+                    json_vars["nextPageToken"] = next_page_token
+                else:
+                    params["nextPageToken"] = next_page_token
+
+            response = self.client.request(*args, json=json_vars,
+                                           params=params, **kwargs)
             if self.items_key:
                 page = response[self.items_key]
             else:

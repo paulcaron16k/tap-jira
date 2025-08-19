@@ -305,17 +305,17 @@ class Issues(Stream):
         start_date = last_updated.astimezone(pytz.timezone(timezone)).strftime("%Y-%m-%d %H:%M")
 
         jql = "updated >= '{}' order by updated asc".format(start_date)
-        params = {"fields": "*all",
-                  # "fieldsByKeys": true,                     # TODO Test this out
-                  # "expand": "changelog,transitions,names",  # TODO Test this out
-                  "expand": "changelog,transitions",
-                  "validateQuery": "strict",
-                  "jql": jql}
+        msg = {"fields": ["*all"],
+               "fieldsByKeys": true,                     # TODO Test this out
+               # "expand": "changelog,transitions,names",  # TODO Test "names"
+               "expand": "changelog,transitions",
+               # "validateQuery": "strict",             # Double check if this is still a property
+               "jql": jql}
         next_page_token = Context.bookmark(page_token_offset) or None
         pager = PaginatorToken(Context.client, items_key="issues", token=next_page_token)
         for page in pager.pages(self.tap_stream_id,
                                 "POST", "/rest/api/3/search/jql",
-                                params=params):
+                                json=msg):
             # sync comments and changelogs for each issue
             sync_sub_streams(page)
             for issue in page:
