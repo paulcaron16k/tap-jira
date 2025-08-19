@@ -305,12 +305,13 @@ class Issues(Stream):
         start_date = last_updated.astimezone(pytz.timezone(timezone)).strftime("%Y-%m-%d %H:%M")
 
         jql = "updated >= '{}' order by updated asc".format(start_date)
-        msg = {"fields": ["*all"],
-               "fieldsByKeys": true,                     # TODO Test this out
-               # "expand": "changelog,transitions,names",  # TODO Test "names"
-               "expand": "changelog,transitions",
-               # "validateQuery": "strict",             # Double check if this is still a property
-               "jql": jql}
+        msg = {
+            "fields": ["*all"],         # TODO CLI issue_fields list to fetch or not
+            # "fieldsByKeys": True,     # TODO CLI fields_by_keys option:
+                                        # switching from JQL names to field keys.
+            "expand": "changelog,transitions",
+            "jql": jql,
+        }
         next_page_token = Context.bookmark(page_token_offset) or None
         pager = PaginatorToken(Context.client, items_key="issues", token=next_page_token)
         for page in pager.pages(self.tap_stream_id,
