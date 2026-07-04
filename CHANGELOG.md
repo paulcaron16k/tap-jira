@@ -1,5 +1,20 @@
 # Changelog
 
+## [v2.8.0]
+  * Bump singer-python and requests modules to latest version. [#136](https://github.com/singer-io/tap-jira/pull/136)
+  * Add visibility fields to fields_to_remove section. [#137](https://github.com/singer-io/tap-jira/pull/137)
+
+## [v2.7.0]
+  * Copies the Issues parent stream's bookmark to its child streams [#132](https://github.com/singer-io/tap-jira/pull/132)
+## [v2.6.0]
+  * Fallback mechanism for JIRA API requests to support on-premises instances [#131](https://github.com/singer-io/tap-jira/pull/131)
+## [v2.5.0]
+  * Add extra tags to `http_request_timer` metrics and `record_counter` metrics [#129](https://github.com/singer-io/tap-jira/pull/129)
+
+## [v2.4.0]
+  * Adds `forced_replication_method` and `parent_tap_stream_id` as discoverable metadata [#120](https://github.com/singer-io/tap-jira/pull/120)
+## [v2.3.0]
+  * Change endpoint for `issues` Stream [#122](https://github.com/singer-io/tap-jira/pull/122)
 ## [v2.2.1]
   * Bump depedency versions for twistlock compliance [#118](https://github.com/singer-io/tap-jira/pull/118)
 
