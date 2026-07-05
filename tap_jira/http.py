@@ -51,6 +51,9 @@ class JiraBadGatewayError(JiraError):
 class JiraConflictError(JiraError):
     pass
 
+class JiraInvalidContentType(JiraError):
+    pass
+
 class JiraNotFoundError(JiraError):
     pass
 
@@ -97,6 +100,10 @@ ERROR_CODE_EXCEPTION_MAPPING = {
     409: {
         "raise_exception": JiraConflictError,
         "message": "The request does not match our state in some way."
+    },
+    415: {
+        "raise_exception": JiraInvalidContentType,
+        "message": "The request method, content-type and query-string vs JSON body does not match."
     },
     429: {
         "raise_exception": JiraRateLimitError,
@@ -158,7 +165,7 @@ def get_request_timeout(config):
     return request_timeout
 
 class Client():
-    def __init__(self, config, config_path = './', dev_mode = False):
+    def __init__(self, config, config_path='./', dev_mode=False):
         self.is_cloud = 'oauth_client_id' in config.keys()
         self.session = requests.Session()
         self.next_request_at = datetime.now()
@@ -254,7 +261,7 @@ class Client():
 
     def __refresh_credentials_timeout(self):
         self.login_timer = None
-        self.refresh_credentials();
+        self.refresh_credentials()
 
     # backoff for Timeout error is already included in "Exception"
     # as it's a parent class of "Timeout" error
@@ -285,7 +292,7 @@ class Client():
                 if not self.login_timer:
                     LOGGER.info("Starting new login timer")
                     self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
-                            self.__refresh_credentials_timeout)
+                                                       self.__refresh_credentials_timeout)
                     self.login_timer.start()
                 else:
                     LOGGER.info("login timer already running")

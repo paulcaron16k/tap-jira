@@ -6,7 +6,7 @@ import dateparser
 from singer import metrics, utils, metadata, Transformer
 from singer.transform import SchemaMismatch
 from dateutil.parser._parser import ParserError
-from .http import Paginator,JiraNotFoundError,IssuesPaginator
+from .http import Paginator, JiraNotFoundError, JiraBadRequestError, IssuesPaginator
 from .context import Context
 
 DEFAULT_PAGE_SIZE = 50
@@ -389,7 +389,6 @@ class Issues(Stream):
         self.set_bookmarks_for_issue_sub_streams(updated_bookmark, last_updated)
         singer.write_state(Context.state)
 
-
 class Worklogs(Stream):
     def _fetch_ids(self, last_updated):
         # since_ts uses millisecond precision
@@ -434,6 +433,59 @@ class Worklogs(Stream):
             if last_page:
                 break
 
+
+class Boards(Stream):
+    """Boards are the top-level Jira Agile stream. Each board owns several
+    board-scoped child streams (issues, projects, epics, sprints). They are
+    synced here as each board is processed, mirroring how Projects syncs its
+    versions and components child streams.
+
+    Every board-scoped record is tagged with a ``boardId`` foreign key back
+    to the board it was fetched under, and forms part of the child stream's
+    composite primary key (the same issue/project/epic/sprint can appear on
+    more than one board)."""
+
+    def sync(self):
+        pager = Paginator(Context.client, items_key="values")
+        for page in pager.pages(self.tap_stream_id, "GET",
+                                "/rest/agile/1.0/board"):
+            self.write_page(page)
+            for board in page:
+                self.sync_board_children(board["id"])
+
+    def sync_board_children(self, board_id):
+        # (child stream, path template, items key in the API response)
+        children = [
+            (ISSUEBOARD, "/rest/agile/1.0/board/{}/issue", "issues"),
+            (PROJECTBOARD, "/rest/agile/1.0/board/{}/project", "values"),
+            (EPICS, "/rest/agile/1.0/board/{}/epic", "values"),
+            (SPRINTS, "/rest/agile/1.0/board/{}/sprint", "values"),
+        ]
+        for stream, path_tmpl, items_key in children:
+            if Context.is_selected(stream.tap_stream_id):
+                self.sync_board_child(stream, path_tmpl.format(board_id),
+                                      board_id, items_key)
+
+    @staticmethod
+    def sync_board_child(stream, path, board_id, items_key):
+        pager = Paginator(Context.client, items_key=items_key)
+        try:
+            for page in pager.pages(stream.tap_stream_id, "GET", path):
+                for record in page:
+                    # Foreign key back to the parent board (also part of the
+                    # child stream's composite primary key).
+                    record["boardId"] = board_id
+                stream.write_page(page)
+        except JiraBadRequestError:
+            # Not every board type exposes every resource - e.g. kanban
+            # boards have no sprints - and Jira returns a 400 in that case.
+            # Skip this resource for this board, the same way the Users
+            # stream skips groups that don't exist.
+            LOGGER.info('Skipping "%s" for board %s: not supported for this board type',
+                        stream.tap_stream_id, board_id)
+
+
+
 PROJECTS = Projects("projects", ["id"], forced_replication_method="FULL_TABLE")
 VERSIONS = Stream("versions", ["id"], parent_tap_stream_id="projects", indirect_stream=True, forced_replication_method="FULL_TABLE")
 COMPONENTS = Stream("components", ["id"], parent_tap_stream_id="projects", indirect_stream=True, forced_replication_method="FULL_TABLE")
@@ -443,6 +495,18 @@ ISSUE_TRANSITIONS = Stream("issue_transitions", ["id","issueId"], # Composite pr
                            parent_tap_stream_id="issues", indirect_stream=True,
                            forced_replication_method="INCREMENTAL")
 CHANGELOGS = Stream("changelogs", ["id"], parent_tap_stream_id="issues", indirect_stream=True, forced_replication_method="INCREMENTAL")
+WORKLOGS = Worklogs("worklogs", ["id"], forced_replication_method="INCREMENTAL")
+
+# Agile API streams. Boards is a top-level stream; issue_board, project_board,
+# epics and sprints are board-scoped children synced within Boards.sync (the
+# same way versions and components are synced within Projects.sync). Each
+# child uses a composite primary key of [id, boardId] because the same
+# resource can appear on more than one board.
+BOARDS = Boards("boards", ["id"], forced_replication_method="FULL_TABLE")
+ISSUEBOARD = Stream("issue_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+PROJECTBOARD = Stream("project_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+EPICS = Stream("epics", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+SPRINTS = Stream("sprints", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 
 ALL_STREAMS = [
     PROJECTS,
@@ -457,7 +521,12 @@ ALL_STREAMS = [
     ISSUE_COMMENTS,
     CHANGELOGS,
     ISSUE_TRANSITIONS,
-    Worklogs("worklogs", ["id"], forced_replication_method="INCREMENTAL"),
+    WORKLOGS,
+    BOARDS,
+    ISSUEBOARD,
+    PROJECTBOARD,
+    EPICS,
+    SPRINTS,
 ]
 
 ALL_STREAM_IDS = [s.tap_stream_id for s in ALL_STREAMS]
@@ -484,6 +553,13 @@ def validate_dependencies():
             errs.append(msg_tmpl.format("Issue Comments", "Issues"))
         if ISSUE_TRANSITIONS.tap_stream_id in selected:
             errs.append(msg_tmpl.format("Issue Transitions", "Issues"))
+    if BOARDS.tap_stream_id not in selected:
+        for child, label in [(ISSUEBOARD, "Board Issues"),
+                             (PROJECTBOARD, "Board Projects"),
+                             (EPICS, "Epics"),
+                             (SPRINTS, "Sprints")]:
+            if child.tap_stream_id in selected:
+                errs.append(msg_tmpl.format(label, "Boards"))
     if errs:
         raise DependencyException(" ".join(errs))
 

@@ -117,19 +117,24 @@ def main():
     args = get_args()
     if args.dev:
         LOGGER.warning("Executing Tap in Dev mode")
-    LOGGER.info(f"Tap args {json.dumps(args)}")
+        # Dump config, properties, and streams selected
+        LOGGER.debug(f"Tap args {json.dumps(vars(args))}")
 
     jira_config = args.config
-    # jira client instance
     jira_client = Client(jira_config, args.config_path, args.dev)
 
     # Setup Context
     Context.client = jira_client
-    catalog = Catalog.from_dict(args.properties) \
-        if args.properties else discover()
     Context.config = jira_config
     Context.state = args.state
-    Context.catalog = catalog
+    if args.properties:
+        Context.catalog = Catalog.from_dict(args.properties)
+    elif args.catalog:
+        Context.catalog = Catalog.from_dict(args.catalog)
+    else:
+        if not args.discover:
+            # This is useless as no streams/fields will be selected
+            Context.catalog = discover()
 
     try:
         if args.discover:

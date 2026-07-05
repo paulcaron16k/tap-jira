@@ -1,0 +1,9 @@
+{
+    "start_date": "2024-07-01",
+    "username": "your-jira-username",
+    "password": "your-jira-password",
+    "base_url": "https://your-jira-domain",
+    "user_agent": "Tap-Jira Test",
+    "request_timeout": 300,
+    "groups": "jira-administrators, site-admins, jira-software-users"
+}
