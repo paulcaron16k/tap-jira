@@ -253,6 +253,9 @@ class Client():
             response = self.send(*args, **kwargs)
             self.next_request_at = datetime.now() + TIME_BETWEEN_REQUESTS
             timer.tags[metrics.Tag.http_status_code] = response.status_code
+            timer.tags["http_method"] = response.request.method
+            timer.tags["tap_stream_id"] = tap_stream_id
+            timer.tags["endpoint"] = response.url
         check_status(response)
         return response.json()
 
@@ -299,17 +302,14 @@ class Client():
 
     def test_credentials_are_authorized(self):
         # Assume that everyone has issues, so we try and hit that endpoint
-        self.request("issues", "GET", "/rest/api/3/search",
-                     params={
-                         "maxResults": 1,
-                         "jql": "updated >= '2000-01-01 00:00' order by updated asc",
-                     }
-        )
+        self.request("issues", "GET", "/rest/api/3/search/jql",
+                     params={"jql": "updated >= -1d", "maxResults": 1})
 
     def test_basic_credentials_are_authorized(self):
         # Make a call to myself endpoint for verify creds
         # Here, we are retrieving serverInfo for the Jira instance by which credentials will also be verified.
         # Assign True value to is_on_prem_instance property for on-prem Jira instance
+        self.request("test","GET","/rest/api/2/myself")
         self.is_on_prem_instance = self.request("users","GET","/rest/api/2/serverInfo").get('deploymentType') == "Server"
 
     def _write_config(self):
@@ -371,49 +371,37 @@ class Paginator():
             if page:
                 yield page
 
-
-class PaginatorToken():
-    def __init__(self, client, token=None, items_key="values"):
-        self.client = client
-        self.next_page_token = token
-        self.items_key = items_key
+class IssuesPaginator(Paginator):
 
     def pages(self, *args, **kwargs):
         """Returns a generator which yields pages of data. When a given page is
-        yielded, the nextPageToken property can be used to know what the index
-        of the next page is (its not clear if this is useful for bookmarking).
+        yielded, the next_page_num property can be used to know what the index
+        of the next page is (useful for bookmarking).
 
         :param args: Passed to Client.request
         :param kwargs: Passed to Client.request
         """
-        params = None
-        json_vars = None
-        if "json" in kwargs:
-            json_vars = kwargs.pop("json", {}).copy()       # POST JSON body
-        else:
-            params = kwargs.pop("params", {}).copy()        # GET query string
+        params = kwargs.pop("params", {}).copy()
+        has_more_pages = True
 
-        next_page_token = self.next_page_token
-        done = False
-        while not done:
-            if next_page_token:
-                if json_vars:
-                    json_vars["nextPageToken"] = next_page_token
-                else:
-                    params["nextPageToken"] = next_page_token
-
-            response = self.client.request(*args, json=json_vars,
-                                           params=params, **kwargs)
+        while has_more_pages:
+            if self.next_page_num:
+                if isinstance(self.next_page_num, str):
+                    params["nextPageToken"] = self.next_page_num
+            if self.order_by:
+                params["orderBy"] = self.order_by
+            response = self.client.request(*args, params=params, **kwargs)
             if self.items_key:
                 page = response[self.items_key]
             else:
                 page = response
 
-            if 'nextPageToken' in response:
-                next_page_token = response['nextPageToken']
-            else:
-                next_page_token = None
-                done = True
+            # Accounts for responses that don't nest their results in a
+            # key by falling back to the params `maxResults` setting.
+            if 'isLast' in response:
+                has_more_pages = bool(not response["isLast"])
+
+            self.next_page_num = response.get("nextPageToken") or None
 
             if page:
                 yield page

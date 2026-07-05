@@ -13,6 +13,9 @@ class Mockresponse:
         self.content = content
         self.headers = headers
         self.raise_error = raise_error
+        self.url = ""
+        self.request = mock.Mock()
+        self.request.method = ""
 
     def prepare(self):
         return (self.json_data, self.status_code, self.content, self.headers, self.raise_error)
@@ -386,7 +389,7 @@ class TestUserGroupSync(unittest.TestCase):
         '''
         mock_config.get.return_value = "test"
 
-        user = streams.Users("users", ["accountId"])
+        user = streams.Users("users", ["accountId"], "INCREMENTAL")
         user.sync()
 
         # JiraNotFoundError is raised so skipping log should be called
@@ -402,7 +405,7 @@ class TestUserGroupSync(unittest.TestCase):
         mock_config.get.return_value = "test"
         mock_get_pages.return_value = ["page1", "page2", "page3"] # return 3 mock pages
 
-        user = streams.Users("users", ["accountId"])
+        user = streams.Users("users", ["accountId"], "INCREMENTAL")
         user.sync()
 
         # write_page should be called 3 times as three mock pages return

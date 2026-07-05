@@ -6,7 +6,7 @@ import dateparser
 from singer import metrics, utils, metadata, Transformer
 from singer.transform import SchemaMismatch
 from dateutil.parser._parser import ParserError
-from .http import Paginator, PaginatorToken, JiraNotFoundError
+from .http import Paginator, JiraNotFoundError, IssuesPaginator
 from .context import Context
 
 DEFAULT_PAGE_SIZE = 50
@@ -126,13 +126,18 @@ class Stream():
     :var tap_stream_id:
     :var pk_fields: A list of primary key fields
     :var indirect_stream: If True, this indicates the stream cannot be synced
-    directly, but instead has its data generated via a separate stream."""
-    def __init__(self, tap_stream_id, pk_fields, indirect_stream=False, path=None):
+    directly, but instead has its data generated via a separate stream.
+    :var forced_replication_method: Replication method of the stream
+    :var parent_tap_stream_id: The parent class of the stream (optional)"""
+
+    def __init__(self, tap_stream_id, pk_fields, forced_replication_method, parent_tap_stream_id=None, indirect_stream=False, path=None):
         self.tap_stream_id = tap_stream_id
+        self.parent_tap_stream_id = parent_tap_stream_id
         self.pk_fields = pk_fields
         # Only used to skip streams in the main sync function
         self.indirect_stream = indirect_stream
         self.path = path
+        self.forced_replication_method = forced_replication_method
 
     def __repr__(self):
         return "<Stream(" + self.tap_stream_id + ")>"
@@ -160,6 +165,7 @@ class Stream():
 
         with metrics.record_counter(self.tap_stream_id) as counter:
             counter.increment(rec_count) # Do not increment counter for skipped records
+            counter.tags["tap_stream_id"] = self.tap_stream_id
 
 def update_user_date(page):
     """
@@ -174,6 +180,7 @@ def update_user_date(page):
         page['userStartDate'] = transform_user_date(page['userStartDate'])
 
     return page
+
 class Projects(Stream):
     def sync_on_prem(self):
         """ Sync function for the on prem instances"""
@@ -295,28 +302,65 @@ class Users(Stream):
 
 
 class Issues(Stream):
+    def set_bookmarks_for_issue_sub_streams(self, bookmark_path, bookmark_value):
+        '''ISSUE_COMMENTS, CHANGELOGS, and ISSUE_TRANSITIONS are all
+        incremental child streams of the incremental stream ISSUES. The
+        ISSUES' bookmark is used to query the data for both parent and
+        child streams. Every incremental stream is required to have a
+        bookmark.
+        These child stream bookmarks are not used during the sync.
+        '''
+        if Context.is_selected(ISSUE_COMMENTS.tap_stream_id):
+            bookmark_path[0] = ISSUE_COMMENTS.tap_stream_id
+            Context.set_bookmark(bookmark_path, bookmark_value)
+
+        if Context.is_selected(CHANGELOGS.tap_stream_id):
+            bookmark_path[0] = CHANGELOGS.tap_stream_id
+            Context.set_bookmark(bookmark_path, bookmark_value)
+
+        if Context.is_selected(ISSUE_TRANSITIONS.tap_stream_id):
+            bookmark_path[0] = ISSUE_TRANSITIONS.tap_stream_id
+            Context.set_bookmark(bookmark_path, bookmark_value)
+
 
     def sync(self):
         updated_bookmark = [self.tap_stream_id, "updated"]
-        page_token_offset = [self.tap_stream_id, "offset", "page_token"]
+        page_num_offset = [self.tap_stream_id, "offset", "page_num"]
 
         last_updated = Context.update_start_date_bookmark(updated_bookmark)
         timezone = Context.retrieve_timezone()
         start_date = last_updated.astimezone(pytz.timezone(timezone)).strftime("%Y-%m-%d %H:%M")
 
         jql = "updated >= '{}' order by updated asc".format(start_date)
-        msg = {
-            "fields": ["*all"],         # TODO CLI issue_fields list to fetch or not
-            # "fieldsByKeys": True,     # TODO CLI fields_by_keys option:
-                                        # switching from JQL names to field keys.
-            "expand": "changelog,transitions",
-            "jql": jql,
-        }
-        next_page_token = Context.bookmark(page_token_offset) or None
-        pager = PaginatorToken(Context.client, items_key="issues", token=next_page_token)
-        for page in pager.pages(self.tap_stream_id,
-                                "POST", "/rest/api/3/search/jql",
-                                json=msg):
+        params = {"fields": "*all",
+                  "expand": "changelog,transitions",
+                  "validateQuery": "strict",
+                  "jql": jql}
+        page_num = Context.bookmark(page_num_offset) or 0
+        endpoint = "/rest/api/2/search/jql"
+        # Validate which endpoint works
+        try:
+            # Use a minimal validation request to reduce unnecessary data transfer
+            validation_params = dict(params)
+            validation_params["maxResults"] = 1
+            Context.client.request(tap_stream_id=self.tap_stream_id, method="GET", path=endpoint, params=validation_params)
+            pager = IssuesPaginator(Context.client, items_key="issues", page_num=page_num)
+            issues_pages = pager.pages(self.tap_stream_id,
+                                "GET", endpoint,
+                                params=params)
+        except JiraNotFoundError as ex:
+            if "HTTP-error-code: 404" in str(ex) or "resource you have specified cannot be found" in str(ex).lower():
+                LOGGER.warning(
+                "Endpoint /rest/api/2/search/jql not supported on this JIRA instance. " \
+                "Falling back to /rest/api/2/search."
+                )
+                pager = Paginator(Context.client, items_key="issues", page_num=page_num)
+                issues_pages = pager.pages(self.tap_stream_id,
+                                    "GET", "/rest/api/2/search",
+                                    params=params)
+            else:
+                raise
+        for page in issues_pages:
             # sync comments and changelogs for each issue
             sync_sub_streams(page)
             for issue in page:
@@ -333,15 +377,17 @@ class Issues(Stream):
 
             # Grab last_updated before transform in write_page
             last_updated = utils.strptime_to_utc(page[-1]["fields"]["updated"])
-
             self.write_page(page)
-
-            Context.set_bookmark(page_token_offset, pager.next_page_token)
+            Context.set_bookmark(page_num_offset, pager.next_page_num)
+            # Copy parent's bookmark to children
+            self.set_bookmarks_for_issue_sub_streams(page_num_offset.copy(), pager.next_page_num)
             singer.write_state(Context.state)
-        Context.set_bookmark(page_token_offset, None)
+        Context.set_bookmark(page_num_offset, None)
         Context.set_bookmark(updated_bookmark, last_updated)
+        # copy parent's bookmark to children
+        self.set_bookmarks_for_issue_sub_streams(page_num_offset, None)
+        self.set_bookmarks_for_issue_sub_streams(updated_bookmark, last_updated)
         singer.write_state(Context.state)
-
 
 class Worklogs(Stream):
     def _fetch_ids(self, last_updated):
@@ -501,33 +547,34 @@ class Sprints(Stream):
 
 
 
-# Definition: DerivedFromStreamClass(stream_name (e.g. id), pk_fields[], indirect_stream=False, path=None)
-VERSIONS = Stream("versions", ["id"], indirect_stream=True)
-COMPONENTS = Stream("components", ["id"], indirect_stream=True)
-ISSUES = Issues("issues", ["id"])
-ISSUE_COMMENTS = Stream("issue_comments", ["id"], indirect_stream=True)
+PROJECTS = Projects("projects", ["id"], forced_replication_method="FULL_TABLE")
+VERSIONS = Stream("versions", ["id"], parent_tap_stream_id="projects", indirect_stream=True, forced_replication_method="FULL_TABLE")
+COMPONENTS = Stream("components", ["id"], parent_tap_stream_id="projects", indirect_stream=True, forced_replication_method="FULL_TABLE")
+ISSUES = Issues("issues", ["id"], forced_replication_method="INCREMENTAL")
+ISSUE_COMMENTS = Stream("issue_comments", ["id"], parent_tap_stream_id="issues", indirect_stream=True, forced_replication_method="INCREMENTAL")
 ISSUE_TRANSITIONS = Stream("issue_transitions", ["id","issueId"], # Composite primary key
-                           indirect_stream=True)
-PROJECTS = Projects("projects", ["id"])
-CHANGELOGS = Stream("changelogs", ["id"], indirect_stream=True)
-WORKLOGS = Worklogs("worklogs", ["id"])
+                           parent_tap_stream_id="issues", indirect_stream=True,
+                           forced_replication_method="INCREMENTAL")
+CHANGELOGS = Stream("changelogs", ["id"], parent_tap_stream_id="issues", indirect_stream=True, forced_replication_method="INCREMENTAL")
+WORKLOGS = Worklogs("worklogs", ["id"], forced_replication_method="INCREMENTAL")
 
-# Agile API streams
-BOARDS = Boards("boards", ["id"])
-ISSUEBOARD = IssueBoard("issue_board", ["id"], indirect_stream=True)
-PROJECTBOARD = ProjectBoard("project_board", ["id"], indirect_stream=True)
-EPICS = Epics("epics", ["id"], indirect_stream=True)
-SPRINTS = Sprints("sprints", ["id"], indirect_stream=True)
+# Agile API streams (work in progress: sync() bodies still reference helpers
+# not yet implemented in this codebase - see Client.fetch_pages/deep_get).
+BOARDS = Boards("boards", ["id"], forced_replication_method="FULL_TABLE")
+ISSUEBOARD = IssueBoard("issue_board", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="INCREMENTAL")
+PROJECTBOARD = ProjectBoard("project_board", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+EPICS = Epics("epics", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+SPRINTS = Sprints("sprints", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 
 ALL_STREAMS = [
     PROJECTS,
     VERSIONS,
     COMPONENTS,
-    ProjectTypes("project_types", ["key"]),
-    Stream("project_categories", ["id"], path="/rest/api/2/projectCategory"),
-    Stream("resolutions", ["id"], path="/rest/api/2/resolution"),
-    Stream("roles", ["id"], path="/rest/api/2/role"),
-    Users("users", ["accountId"]),
+    ProjectTypes("project_types", ["key"], forced_replication_method="FULL_TABLE"),
+    Stream("project_categories", ["id"], path="/rest/api/2/projectCategory", forced_replication_method="FULL_TABLE"),
+    Stream("resolutions", ["id"], path="/rest/api/2/resolution", forced_replication_method="FULL_TABLE"),
+    Stream("roles", ["id"], path="/rest/api/2/role", forced_replication_method="FULL_TABLE"),
+    Users("users", ["accountId"], forced_replication_method="FULL_TABLE"),
     ISSUES,
     ISSUE_COMMENTS,
     CHANGELOGS,

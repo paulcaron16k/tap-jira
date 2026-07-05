@@ -13,7 +13,8 @@ class AllFieldsTest(BaseTapTest):
     fields_to_remove = {
         # Most of the fields will be included using "expand" parameter in the API Call
         # See backlog card: https://jira.talendforge.org/browse/TDL-17948 for more details
-        "worklogs": ["properties"],
+        # visibility: only present when a worklog has a visibility restriction set
+        "worklogs": ["properties", "visibility"],
         # removed in the Tap
         "project_types": ["icon"],
         # name, key: properties are deprected
@@ -23,7 +24,7 @@ class AllFieldsTest(BaseTapTest):
         "versions": ["expand", "moveUnfixedIssuesTo", "project", "remotelinks", "operations"],
         # fieldsToInclude: not found in the doc
         "issues": ["renderedFields", "schema", "editmeta", "fieldsToInclude", "versionedRepresentations", "names", "properties"],
-        "issue_comments": ["properties", "renderedBody"],
+        "issue_comments": ["properties", "renderedBody", "visibility"],
         "projects": ["roles", "issueTypes", "email", "assigneeType", "components"],
         "issue_transitions": ["fields", "expand"],
         # iconUrl: not found in the doc
@@ -72,12 +73,16 @@ class AllFieldsTest(BaseTapTest):
             expected_streams, synced_stream_names,
             logging=f"verify no unexpected streams are replicated: {expected_streams}"
         )
-
+        issues_child_streams = ["issue_comments", "changelogs", "issue_transitions"]
         for stream in expected_streams:
             with self.subTest(stream=stream):
                 # expected values
-                expected_automatic_keys = self.expected_primary_keys().get(stream, set()) | \
-                    self.top_level_replication_key_fields().get(stream, set()) | self.expected_foreign_keys().get(stream, set())
+                if stream in issues_child_streams:
+                    expected_automatic_keys = self.expected_primary_keys().get(stream, set()) | \
+                        self.expected_foreign_keys().get(stream, set())
+                else:
+                    expected_automatic_keys = self.expected_primary_keys().get(stream, set()) | \
+                        self.top_level_replication_key_fields().get(stream, set()) | self.expected_foreign_keys().get(stream, set())
                 # get all expected keys
                 expected_all_keys = stream_to_all_catalog_fields[stream]
 
