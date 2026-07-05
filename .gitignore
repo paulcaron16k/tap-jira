@@ -104,3 +104,6 @@ state.json
 catalog.json
 
 todo.org
+
+# Leftover OAuth credential dump (no longer written; ignore any stale copy)
+local_storage.json

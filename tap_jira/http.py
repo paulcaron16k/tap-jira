@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import time
-import threading
+import os
+import tempfile
 import re
 import json
 from requests.exceptions import (HTTPError, Timeout)
@@ -10,9 +11,13 @@ from singer import metrics
 import singer
 import backoff
 
-# Jira OAuth tokens last for 3600 seconds. We set it to 3500 to try to
-# come in under the limit.
-REFRESH_TOKEN_EXPIRATION_PERIOD = 3500
+# Atlassian OAuth access tokens are short-lived (the token response carries an
+# `expires_in`, currently 3600s). We refresh once the token is within this many
+# seconds of expiring so an in-flight request never rides an expired token.
+TOKEN_EXPIRY_MARGIN_SECONDS = 600
+
+# Fallback lifetime used only if the token response omits `expires_in`.
+DEFAULT_ACCESS_TOKEN_LIFETIME = 3600
 
 # The project plan for this tap specified:
 # > our past experience has shown that issuing queries no more than once every
@@ -79,6 +84,16 @@ def should_retry_httperror(exception):
         return True
 
     return 500 <= exception.response.status_code < 600
+
+
+def should_giveup_on_refresh(exception):
+    """Give up (do not retry) refreshing the token on a 4xx from the auth
+    endpoint - e.g. an `invalid_grant` because the refresh token was revoked or
+    expired. Those never recover on retry and require re-authorization. Network
+    errors and 5xx responses have no `.response` (or a 5xx one) and are retried.
+    """
+    response = getattr(exception, "response", None)
+    return response is not None and 400 <= response.status_code < 500
 
 ERROR_CODE_EXCEPTION_MAPPING = {
     400: {
@@ -170,7 +185,6 @@ class Client():
         self.session = requests.Session()
         self.next_request_at = datetime.now()
         self.user_agent = config.get("user_agent")
-        self.login_timer = None
         self.timeout = get_request_timeout(config)
         self.config_path = config_path
 
@@ -187,9 +201,11 @@ class Client():
             self.oauth_client_id = config.get('oauth_client_id')
             self.oauth_client_secret = config.get('oauth_client_secret')
 
-            # Only appears to be needed once for any 6 hour period. If
-            # running the tap for more than 6 hours is needed this will
-            # likely need to be more complicated.
+            # Refresh once up front to establish a known-fresh token and its
+            # expiry; from then on _ensure_access_token refreshes just-in-time
+            # (only once the token nears expiry) rather than on a background
+            # timer.
+            self.token_expires_at = None
             self.refresh_credentials()
             self.test_credentials_are_authorized()
         else:
@@ -226,6 +242,10 @@ class Client():
                           max_tries=6,
                           giveup=lambda e: not should_retry_httperror(e))
     def send(self, method, path, headers={}, **kwargs):
+        # Single choke point for every HTTP call, so refreshing here keeps the
+        # token fresh for both request() and any direct send() callers (e.g.
+        # Context.retrieve_timezone).
+        self._ensure_access_token()
         if self.is_cloud:
             # OAuth Path
             request = requests.Request(method,
@@ -246,6 +266,22 @@ class Client():
                           max_tries=10,
                           interval=60)
     def request(self, tap_stream_id, *args, **kwargs):
+        response = self._timed_send(tap_stream_id, *args, **kwargs)
+        try:
+            check_status(response)
+        except JiraUnauthorizedError:
+            # The access token may have been invalidated early - clock skew, a
+            # revoked grant, or a long stall between requests. Refresh once and
+            # retry before surfacing the 401.
+            if not self.is_cloud:
+                raise
+            LOGGER.info("Received 401 Unauthorized; refreshing OAuth token and retrying once")
+            self.refresh_credentials()
+            response = self._timed_send(tap_stream_id, *args, **kwargs)
+            check_status(response)
+        return response.json()
+
+    def _timed_send(self, tap_stream_id, *args, **kwargs):
         wait = (self.next_request_at - datetime.now()).total_seconds()
         if wait > 0:
             time.sleep(wait)
@@ -256,49 +292,52 @@ class Client():
             timer.tags["http_method"] = response.request.method
             timer.tags["tap_stream_id"] = tap_stream_id
             timer.tags["endpoint"] = response.url
-        check_status(response)
-        return response.json()
+        return response
 
-    def __refresh_credentials_timeout(self):
-        self.login_timer = None
-        self.refresh_credentials()
+    def _ensure_access_token(self):
+        """Refresh the OAuth access token if it is missing or within
+        TOKEN_EXPIRY_MARGIN_SECONDS of expiring. No-op for Basic Auth.
 
-    # backoff for Timeout error is already included in "Exception"
-    # as it's a parent class of "Timeout" error
-    @backoff.on_exception(backoff.expo, Exception, max_tries=3, factor=5)
+        Refreshing lazily on the calling thread (rather than from a background
+        timer) means there is only ever one thread mutating the token/refresh
+        token, so no locking is needed, and nothing keeps the process alive
+        after the sync finishes."""
+        if not self.is_cloud:
+            return
+        if self.token_expires_at is None or datetime.now() >= self.token_expires_at:
+            self.refresh_credentials()
+
+    @backoff.on_exception(backoff.expo,
+                          (requests.exceptions.ConnectionError, HTTPError, Timeout),
+                          max_tries=3,
+                          factor=5,
+                          giveup=should_giveup_on_refresh)
     def refresh_credentials(self):
         body = {"grant_type": "refresh_token",
                 "client_id": self.oauth_client_id,
                 "client_secret": self.oauth_client_secret,
                 "refresh_token": self.refresh_token}
-        token_valid = False
-        try:
-            resp = self.session.post(
-                "https://auth.atlassian.com/oauth/token",
-                data=body,
-                timeout=self.timeout)
-            resp.raise_for_status()
-            token_valid = True
-            self.access_token = resp.json()['access_token']
-            self.refresh_token = resp.json()['refresh_token']
-            self._write_config()
-        except Exception as ex:
-            error_message = str(ex)
-            if resp:
-                error_message = error_message + ", Response from Jira: {}".format(resp.text)
-            raise Exception(error_message) from ex
-        finally:
-            if token_valid:
-                if not self.login_timer:
-                    LOGGER.info("Starting new login timer")
-                    self.login_timer = threading.Timer(REFRESH_TOKEN_EXPIRATION_PERIOD,
-                                                       self.__refresh_credentials_timeout)
-                    self.login_timer.start()
-                else:
-                    LOGGER.info("login timer already running")
+        resp = self.session.post(
+            "https://auth.atlassian.com/oauth/token",
+            data=body,
+            timeout=self.timeout)
+        if resp.status_code != 200:
+            # Surface Atlassian's error body; raise_for_status lets backoff
+            # decide whether this is retryable (5xx/network) or terminal (4xx).
+            LOGGER.error("Failed to refresh OAuth token (HTTP %s): %s",
+                         resp.status_code, resp.text)
+        resp.raise_for_status()
 
-            else:
-                LOGGER.error("Invalid OAuth token. Failed to refresh credentials.")
+        payload = resp.json()
+        self.access_token = payload["access_token"]
+        # Atlassian rotates the refresh token on every refresh; the previous one
+        # is invalidated, so the new value must be persisted (see _write_config).
+        self.refresh_token = payload["refresh_token"]
+        expires_in = payload.get("expires_in", DEFAULT_ACCESS_TOKEN_LIFETIME)
+        self.token_expires_at = datetime.now() + timedelta(
+            seconds=max(expires_in - TOKEN_EXPIRY_MARGIN_SECONDS, 0))
+        self._write_config()
+        LOGGER.info("OAuth access token refreshed; valid for ~%ss", expires_in)
 
     def test_credentials_are_authorized(self):
         # Assume that everyone has issues, so we try and hit that endpoint
@@ -313,22 +352,31 @@ class Client():
         self.is_on_prem_instance = self.request("users","GET","/rest/api/2/serverInfo").get('deploymentType') == "Server"
 
     def _write_config(self):
-        LOGGER.info("Credentials Refreshed")
+        LOGGER.info("Persisting refreshed OAuth tokens to %s", self.config_path)
 
-        # Update config at config_path
         with open(self.config_path) as file:
             config = json.load(file)
 
         config['refresh_token'] = self.refresh_token
         config['access_token'] = self.access_token
 
-        with open(self.config_path, 'w') as file:
-            json.dump(config, file, indent=2)
-
-        # store the refreshed config in disk
-        with open('local_storage.json', 'w') as file:
-            LOGGER.info(f"Save refreshed credentials file {file}")
-            json.dump(config, file, indent=2)
+        # Write atomically: a crash or kill mid-write must not leave a truncated
+        # config, which would strand the rotated (single-use) refresh token and
+        # force a manual re-authorization. Write a sibling temp file (same
+        # directory => same filesystem, so os.replace is atomic) then swap it in.
+        config_dir = os.path.dirname(os.path.abspath(self.config_path))
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as tmp_file:
+                json.dump(config, tmp_file, indent=2)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            os.replace(tmp_path, self.config_path)
+        except Exception:
+            # Leave the original config untouched and don't litter temp files.
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
 
 class Paginator():
     def __init__(self, client, page_num=0, order_by=None, items_key="values"):

@@ -1,5 +1,8 @@
 # Changelog
 
+## [v3.2.0]
+  * Rework OAuth token maintenance: refresh just-in-time based on the token's `expires_in` (removing the background refresh timer), refresh-and-retry once on a 401, persist rotated tokens atomically, and drop the `local_storage.json` credential dump.
+
 ## [v3.1.0]
   * Add Jira Agile streams: `boards` and its board-scoped child streams `issue_board`, `project_board`, `epics`, and `sprints`.
 
