@@ -6,7 +6,7 @@ import dateparser
 from singer import metrics, utils, metadata, Transformer
 from singer.transform import SchemaMismatch
 from dateutil.parser._parser import ParserError
-from .http import Paginator, JiraNotFoundError, IssuesPaginator
+from .http import Paginator, JiraNotFoundError, JiraBadRequestError, IssuesPaginator
 from .context import Context
 
 DEFAULT_PAGE_SIZE = 50
@@ -435,115 +435,54 @@ class Worklogs(Stream):
 
 
 class Boards(Stream):
-    endpoint = "/rest/agile/1.0/board"
-    paginate = True
-    tap_stream_id = "boards"
-    key_properties = ["id"]
+    """Boards are the top-level Jira Agile stream. Each board owns several
+    board-scoped child streams (issues, projects, epics, sprints). They are
+    synced here as each board is processed, mirroring how Projects syncs its
+    versions and components child streams.
 
+    Every board-scoped record is tagged with a ``boardId`` foreign key back
+    to the board it was fetched under, and forms part of the child stream's
+    composite primary key (the same issue/project/epic/sprint can appear on
+    more than one board)."""
 
-class IssueBoard(Stream):
-    endpoint = "/rest/agile/1.0/board/{}/issue"
-    paginate = True
-    params = {"expand": "sprint,epic,project,created,updated"}
-    tap_stream_id = "issue_board"
-    key_properties = ["id"]
+    def sync(self):
+        pager = Paginator(Context.client, items_key="values")
+        for page in pager.pages(self.tap_stream_id, "GET",
+                                "/rest/agile/1.0/board"):
+            self.write_page(page)
+            for board in page:
+                self.sync_board_children(board["id"])
 
-    def sync(self, client, config, state, **kwargs):
-        record = kwargs.get('record', {})
-        fendpoint = self.endpoint.format(record['id'])
+    def sync_board_children(self, board_id):
+        # (child stream, path template, items key in the API response)
+        children = [
+            (ISSUEBOARD, "/rest/agile/1.0/board/{}/issue", "issues"),
+            (PROJECTBOARD, "/rest/agile/1.0/board/{}/project", "values"),
+            (EPICS, "/rest/agile/1.0/board/{}/epic", "values"),
+            (SPRINTS, "/rest/agile/1.0/board/{}/sprint", "values"),
+        ]
+        for stream, path_tmpl, items_key in children:
+            if Context.is_selected(stream.tap_stream_id):
+                self.sync_board_child(stream, path_tmpl.format(board_id),
+                                      board_id, items_key)
 
-        # custom state handling to keep track of board issues
-        bookmark_id = str(record['id'])
-        bookmark = singer.get_bookmark(
-            state, self.tap_stream_id, bookmark_id, {})
-
-        offset = 0
-        start_dt = bookmark.get(self.replication_key, config['start_date'])
-        start_dt = utils.strptime_to_utc(start_dt)
-
-        timezone = config.get('timezone', 'UTC')
-        start_date = start_dt.astimezone(
-            pytz.timezone(timezone)).strftime("%Y-%m-%d %H:%M")
-
-        self.params['jql'] = "updated >= '{}' order by updated asc".format(
-            start_date)
-
-        max_updated = start_dt
-        for page, cursor in client.fetch_pages(
-                self.tap_stream_id, fendpoint,
-                items_key="issues",
-                startAt=offset,
-                params=self.params
-        ):
-            for entry in page:
-                entry['boardId'] = record['id']
-                updated_at = deep_get(entry, self.replication_key)
-                updated_at = utils.strptime_to_utc(updated_at)
-                if updated_at and updated_at > max_updated:
-                    max_updated = updated_at
-
-            state = singer.write_bookmark(state, self.tap_stream_id, bookmark_id, {
-                self.replication_key: max_updated.strftime(
-                    utils.DATETIME_PARSE)
-            })
-
-            singer.write_state(state)
-            yield page, cursor
-
-
-class ProjectBoard(Stream):
-    endpoint = "/rest/agile/1.0/board/{}/project"
-    paginate = True
-    tap_stream_id = "project_board"
-    key_properties = ["id"]
-
-    def sync(self, client, config, state, **kwargs):
-        record = kwargs.get('record', {})
-        fendpoint = self.endpoint.format(record['id'])
-        for page, cursor in client.fetch_pages(self.tap_stream_id, fendpoint):
-            for entry in page:
-                entry['boardId'] = record['id']
-            yield page, cursor
-
-
-class Epics(Stream):
-    endpoint = "/rest/agile/1.0/board/{}/epic"
-    paginate = True
-    tap_stream_id = "epics"
-    key_properties = ["id"]
-
-    def sync(self, client, config, state, **kwargs):
-        record = kwargs.get('record', {})
-        fendpoint = self.endpoint.format(record['id'])
-        for page, cursor in client.fetch_pages(self.tap_stream_id, fendpoint):
-            for entry in page:
-                entry['boardId'] = record['id']
-            yield page, cursor
-
-
-class Sprints(Stream):
-    endpoint = "/rest/agile/1.0/board/{}/sprint"
-    paginate = True
-    tap_stream_id = "sprints"
-    key_properties = ["id"]
-
-    def sync(self, client, config, state, **kwargs):
-        record = kwargs.get('record', {})
-        fendpoint = self.endpoint.format(record['id'])
+    @staticmethod
+    def sync_board_child(stream, path, board_id, items_key):
+        pager = Paginator(Context.client, items_key=items_key)
         try:
-            for page, cursor in client.fetch_pages(
-                    self.tap_stream_id, fendpoint):
-                for entry in page:
-                    entry['boardId'] = record['id']
-                yield page, cursor
-        # Not every board supports sprints
-        except requests.exceptions.HTTPError as http_error:
-            if http_error.response.status_code == 400:
-                LOGGER.info(
-                    "Could not find sprint for board \"%s\", skipping", record['id'])
-                yield [], 0
-            else:
-                raise http_error
+            for page in pager.pages(stream.tap_stream_id, "GET", path):
+                for record in page:
+                    # Foreign key back to the parent board (also part of the
+                    # child stream's composite primary key).
+                    record["boardId"] = board_id
+                stream.write_page(page)
+        except JiraBadRequestError:
+            # Not every board type exposes every resource - e.g. kanban
+            # boards have no sprints - and Jira returns a 400 in that case.
+            # Skip this resource for this board, the same way the Users
+            # stream skips groups that don't exist.
+            LOGGER.info('Skipping "%s" for board %s: not supported for this board type',
+                        stream.tap_stream_id, board_id)
 
 
 
@@ -558,13 +497,16 @@ ISSUE_TRANSITIONS = Stream("issue_transitions", ["id","issueId"], # Composite pr
 CHANGELOGS = Stream("changelogs", ["id"], parent_tap_stream_id="issues", indirect_stream=True, forced_replication_method="INCREMENTAL")
 WORKLOGS = Worklogs("worklogs", ["id"], forced_replication_method="INCREMENTAL")
 
-# Agile API streams (work in progress: sync() bodies still reference helpers
-# not yet implemented in this codebase - see Client.fetch_pages/deep_get).
+# Agile API streams. Boards is a top-level stream; issue_board, project_board,
+# epics and sprints are board-scoped children synced within Boards.sync (the
+# same way versions and components are synced within Projects.sync). Each
+# child uses a composite primary key of [id, boardId] because the same
+# resource can appear on more than one board.
 BOARDS = Boards("boards", ["id"], forced_replication_method="FULL_TABLE")
-ISSUEBOARD = IssueBoard("issue_board", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="INCREMENTAL")
-PROJECTBOARD = ProjectBoard("project_board", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
-EPICS = Epics("epics", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
-SPRINTS = Sprints("sprints", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+ISSUEBOARD = Stream("issue_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+PROJECTBOARD = Stream("project_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+EPICS = Stream("epics", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+SPRINTS = Stream("sprints", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 
 ALL_STREAMS = [
     PROJECTS,
@@ -611,6 +553,13 @@ def validate_dependencies():
             errs.append(msg_tmpl.format("Issue Comments", "Issues"))
         if ISSUE_TRANSITIONS.tap_stream_id in selected:
             errs.append(msg_tmpl.format("Issue Transitions", "Issues"))
+    if BOARDS.tap_stream_id not in selected:
+        for child, label in [(ISSUEBOARD, "Board Issues"),
+                             (PROJECTBOARD, "Board Projects"),
+                             (EPICS, "Epics"),
+                             (SPRINTS, "Sprints")]:
+            if child.tap_stream_id in selected:
+                errs.append(msg_tmpl.format(label, "Boards"))
     if errs:
         raise DependencyException(" ".join(errs))
 
