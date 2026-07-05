@@ -136,15 +136,11 @@ def main():
             # This is useless as no streams/fields will be selected
             Context.catalog = discover()
 
-    try:
-        if args.discover:
-            discover().dump()
-            print()
-        else:
-            sync()
-    finally:
-        if Context.client and Context.client.login_timer:
-            Context.client.login_timer.cancel()
+    if args.discover:
+        discover().dump()
+        print()
+    else:
+        sync()
 
 
 if __name__ == "__main__":
