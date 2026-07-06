@@ -1,0 +1,27 @@
+{
+  "title": "Backlog Issue",
+  "type": ["null", "object"],
+  "properties": {
+    "expand": {
+      "type": ["null", "string"]
+    },
+    "id": {
+      "type": ["null", "integer"]
+    },
+    "self": {
+      "type": ["null", "string"]
+    },
+    "key": {
+      "type": ["null", "string"]
+    },
+    "boardId": {
+      "type": ["null", "integer"]
+    },
+    "fields": {
+      "type": "object",
+      "patternProperties": {
+        ".+": {}
+      }
+    }
+  }
+}

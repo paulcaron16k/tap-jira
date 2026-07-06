@@ -1,5 +1,8 @@
 # Changelog
 
+## [v3.4.0]
+  * Add board-scoped `backlog` (issues not yet in a sprint) and `board_configuration` (column-to-status mapping, estimation field, rank field) streams, synced within the `boards` stream.
+
 ## [v3.3.0]
   * Add `fields` (custom-field definitions, to decode Story Points / Sprint / Epic Link ids) and `statuses` (workflow statuses + status categories) reference streams.
 
