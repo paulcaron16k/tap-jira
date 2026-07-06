@@ -111,8 +111,12 @@ local_storage.json
 test_config.json
 jira_source_catalog.json
 jira_bronze_catalog.json
+jira_bronze_master_data_catalog.json
+jira_bronze_streams_catalog.json
 records.jsonl
 records2.jsonl
+master_data.jsonl
+streams.jsonl
 state.json
 tap-fetch.log
 

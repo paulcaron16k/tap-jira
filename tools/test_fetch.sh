@@ -1,32 +1,35 @@
 #!/bin/bash
 #
-# tools/test_fetch.sh - sync the selected streams from the bronze catalog.
+# tools/test_fetch.sh - run two extractions so devs can compare full vs
+# incremental fetch:
+#   1. master data (FULL_TABLE)  -> tools/master_data.jsonl
+#   2. event streams (INCREMENTAL) -> tools/streams.jsonl
 #
-#   ./tools/test_fetch.sh                 # full sync -> tools/records.jsonl
-#   ./tools/test_fetch.sh --head 20       # stop after 20 output lines (quick peek)
-#   ./tools/test_fetch.sh --state tools/state.json --out tools/records2.jsonl
+#   ./tools/test_fetch.sh                    # both full syncs
+#   ./tools/test_fetch.sh --head 20          # first 20 lines of each (quick peek)
+#   ./tools/test_fetch.sh --state tools/state.json   # resume the incremental run
 #
-# Options: --head N | --state FILE | --out FILE | --config FILE | --catalog FILE
+# Options: --head N | --state FILE (streams only) | --config FILE
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"   # tools/
 REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 CONFIG="$SCRIPT_DIR/test_config.json"
-CATALOG="$SCRIPT_DIR/jira_bronze_catalog.json"
-OUT="$SCRIPT_DIR/records.jsonl"
+MASTER_CAT="$SCRIPT_DIR/jira_bronze_master_data_catalog.json"
+STREAMS_CAT="$SCRIPT_DIR/jira_bronze_streams_catalog.json"
+MASTER_OUT="$SCRIPT_DIR/master_data.jsonl"
+STREAMS_OUT="$SCRIPT_DIR/streams.jsonl"
 LOG="$SCRIPT_DIR/tap-fetch.log"
 HEAD=""
 STATE=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --head)              HEAD="${2:?--head needs a number}"; shift 2 ;;
-    --head=*)            HEAD="${1#*=}"; shift ;;
-    --state)             STATE="${2:?--state needs a file}"; shift 2 ;;
-    --out)               OUT="${2:?--out needs a file}"; shift 2 ;;
-    --config)            CONFIG="${2:?}"; shift 2 ;;
-    --catalog|--properties) CATALOG="${2:?}"; shift 2 ;;
+    --head)     HEAD="${2:?--head needs a number}"; shift 2 ;;
+    --head=*)   HEAD="${1#*=}"; shift ;;
+    --state)    STATE="${2:?--state needs a file}"; shift 2 ;;
+    --config)   CONFIG="${2:?}"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -37,34 +40,44 @@ if [ ! -d "$REPO_ROOT/venv/tap-jira" ]; then
 fi
 . "$REPO_ROOT/venv/tap-jira/bin/activate"
 
-if [ ! -f "$CATALOG" ]; then
-    echo "No $CATALOG - run ./tools/test_catalog.sh first"
-    exit 1
-fi
+# Run one catalog through the tap. stdout = Singer messages (SCHEMA/RECORD/STATE),
+# stderr = logs/metrics -> $LOG (appended), so --head sees clean output and can
+# stop the tap early. head precedes tee so $out is capped to the same N lines.
+run_extraction() {
+    local label="$1" catalog="$2" out="$3"; shift 3
+    local extra=("$@")   # any additional tap args (e.g. --state)
+    if [ ! -f "$catalog" ]; then
+        echo "No $catalog - run ./tools/test_catalog.sh first"; exit 1
+    fi
+    echo ">> [$label] fetch ${HEAD:+(first $HEAD lines) }-> $out   (tap logs -> $LOG)" >&2
+    if [ -n "$HEAD" ]; then
+        set +o pipefail
+        tap-jira --config "$CONFIG" --properties "$catalog" "${extra[@]}" 2>>"$LOG" \
+            | head -n "$HEAD" | tee "$out"
+        set -o pipefail
+    else
+        tap-jira --config "$CONFIG" --properties "$catalog" "${extra[@]}" 2>>"$LOG" \
+            | tee "$out"
+    fi
+    echo ">> [$label] wrote $(wc -l < "$out") lines to $out" >&2
+}
 
-args=(--config "$CONFIG" --properties "$CATALOG")
-[ -n "$STATE" ] && args+=(--state "$STATE")
+: > "$LOG"   # fresh log for this run
 
-# stdout = Singer messages (SCHEMA/RECORD/STATE); stderr = logs/metrics -> $LOG,
-# so --head sees clean output and can stop the tap early.
-echo ">> fetch ${HEAD:+(first $HEAD lines) }-> $OUT   (tap logs -> $LOG)" >&2
-if [ -n "$HEAD" ]; then
-    # head closes the pipe after N lines, stopping the tap via SIGPIPE (a
-    # broken-pipe/CRITICAL line may appear in $LOG - that's expected). head is
-    # placed before tee so $OUT is limited to the same N lines as the console.
-    set +o pipefail
-    tap-jira "${args[@]}" 2>"$LOG" | head -n "$HEAD" | tee "$OUT"
-    set -o pipefail
-else
-    tap-jira "${args[@]}" 2>"$LOG" | tee "$OUT"
-fi
+# 1) master data - FULL_TABLE streams, re-extracted in full every run.
+run_extraction "master-data / FULL_TABLE" "$MASTER_CAT" "$MASTER_OUT"
 
-echo ">> wrote $(wc -l < "$OUT") lines to $OUT" >&2
+echo "" >&2
 
-# Inspect the output:
-#   jq -c 'select(.type=="RECORD" and .stream=="projects")' tools/records.jsonl | head
-#   jq -r 'select(.type=="RECORD") | .stream' tools/records.jsonl | sort | uniq -c   # counts
-#
-# Resume incremental streams (issues, worklogs bookmark on `updated`):
-#   jq -c 'select(.type=="STATE") | .value' tools/records.jsonl | tail -1 > tools/state.json
-#   ./tools/test_fetch.sh --state tools/state.json --out tools/records2.jsonl
+# 2) event streams - INCREMENTAL streams; pass --state to resume from a bookmark.
+stream_args=()
+[ -n "$STATE" ] && stream_args=(--state "$STATE")
+run_extraction "streams / INCREMENTAL" "$STREAMS_CAT" "$STREAMS_OUT" "${stream_args[@]}"
+
+# Compare the two:
+#   jq -r 'select(.type=="RECORD") | .stream' tools/master_data.jsonl | sort | uniq -c
+#   jq -r 'select(.type=="RECORD") | .stream' tools/streams.jsonl     | sort | uniq -c
+# Incremental streams emit STATE messages with `updated` bookmarks; master data
+# does not. Resume the incremental run:
+#   jq -c 'select(.type=="STATE") | .value' tools/streams.jsonl | tail -1 > tools/state.json
+#   ./tools/test_fetch.sh --state tools/state.json
