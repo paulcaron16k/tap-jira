@@ -1,0 +1,62 @@
+{
+  "title": "Status",
+  "type": ["null", "object"],
+  "properties": {
+    "self": {
+      "type": ["null", "string"],
+      "format": "uri"
+    },
+    "id": {
+      "type": ["null", "string"]
+    },
+    "name": {
+      "type": ["null", "string"]
+    },
+    "untranslatedName": {
+      "type": ["null", "string"]
+    },
+    "description": {
+      "type": ["null", "string"]
+    },
+    "iconUrl": {
+      "type": ["null", "string"]
+    },
+    "statusCategory": {
+      "type": ["null", "object"],
+      "properties": {
+        "self": {
+          "type": ["null", "string"],
+          "format": "uri"
+        },
+        "id": {
+          "type": ["null", "integer"]
+        },
+        "key": {
+          "type": ["null", "string"]
+        },
+        "colorName": {
+          "type": ["null", "string"]
+        },
+        "name": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "scope": {
+      "type": ["null", "object"],
+      "properties": {
+        "type": {
+          "type": ["null", "string"]
+        },
+        "project": {
+          "type": ["null", "object"],
+          "properties": {
+            "id": {
+              "type": ["null", "string"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

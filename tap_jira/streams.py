@@ -452,6 +452,7 @@ class Boards(Stream):
             self.write_page(page)
             for board in page:
                 self.sync_board_children(board["id"])
+                self.sync_board_configuration(board["id"])
 
     def sync_board_children(self, board_id):
         # (child stream, path template, items key in the API response)
@@ -460,6 +461,7 @@ class Boards(Stream):
             (PROJECTBOARD, "/rest/agile/1.0/board/{}/project", "values"),
             (EPICS, "/rest/agile/1.0/board/{}/epic", "values"),
             (SPRINTS, "/rest/agile/1.0/board/{}/sprint", "values"),
+            (BACKLOG, "/rest/agile/1.0/board/{}/backlog", "issues"),
         ]
         for stream, path_tmpl, items_key in children:
             if Context.is_selected(stream.tap_stream_id):
@@ -484,6 +486,25 @@ class Boards(Stream):
             LOGGER.info('Skipping "%s" for board %s: not supported for this board type',
                         stream.tap_stream_id, board_id)
 
+    @staticmethod
+    def sync_board_configuration(board_id):
+        # Board configuration is a single object (not a paginated list), so it
+        # can't go through sync_board_child; wrap it in a one-item page instead.
+        if not Context.is_selected(BOARD_CONFIGURATION.tap_stream_id):
+            return
+        try:
+            config = Context.client.request(
+                BOARD_CONFIGURATION.tap_stream_id, "GET",
+                "/rest/agile/1.0/board/{}/configuration".format(board_id))
+        except (JiraBadRequestError, JiraNotFoundError):
+            LOGGER.info('Skipping configuration for board %s: not available for this board type',
+                        board_id)
+            return
+        # Foreign key back to the parent board (config.id already equals the
+        # board id, but tag boardId too for consistency with the other children).
+        config["boardId"] = board_id
+        BOARD_CONFIGURATION.write_page([config])
+
 
 
 PROJECTS = Projects("projects", ["id"], forced_replication_method="FULL_TABLE")
@@ -507,6 +528,12 @@ ISSUEBOARD = Stream("issue_board", ["id", "boardId"], parent_tap_stream_id="boar
 PROJECTBOARD = Stream("project_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 EPICS = Stream("epics", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 SPRINTS = Stream("sprints", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+# Board backlog: issues not yet assigned to a sprint. Paginated issue list like
+# issue_board, synced via sync_board_child.
+BACKLOG = Stream("backlog", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+# Board configuration: column -> status mapping, estimation field, rank field.
+# A single object per board (id == board id), synced via sync_board_configuration.
+BOARD_CONFIGURATION = Stream("board_configuration", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 
 ALL_STREAMS = [
     PROJECTS,
@@ -515,8 +542,20 @@ ALL_STREAMS = [
     ProjectTypes("project_types", ["key"], forced_replication_method="FULL_TABLE"),
     Stream("project_categories", ["id"], path="/rest/api/2/projectCategory", forced_replication_method="FULL_TABLE"),
     Stream("resolutions", ["id"], path="/rest/api/2/resolution", forced_replication_method="FULL_TABLE"),
+    # PERMISSIONS: listing all global project roles requires the "Administer
+    # Jira" global permission; a non-admin token gets 403 here.
     Stream("roles", ["id"], path="/rest/api/2/role", forced_replication_method="FULL_TABLE"),
+    # PERMISSIONS: enumerating users via /group/member requires the "Browse
+    # users and groups" global permission. Issues can be fetchable by a normal
+    # user while this stream 403s for the same token.
     Users("users", ["accountId"], forced_replication_method="FULL_TABLE"),
+    # Field definitions map custom-field ids (e.g. customfield_10016) to names
+    # and types - needed to interpret agile fields like Story Points / Sprint /
+    # Epic Link. PERMISSIONS: none beyond access to Jira (any authenticated user).
+    Stream("fields", ["id"], path="/rest/api/2/field", forced_replication_method="FULL_TABLE"),
+    # Global workflow statuses and their status categories (To Do / In Progress /
+    # Done). PERMISSIONS: none beyond access to Jira (any authenticated user).
+    Stream("statuses", ["id"], path="/rest/api/2/status", forced_replication_method="FULL_TABLE"),
     ISSUES,
     ISSUE_COMMENTS,
     CHANGELOGS,
@@ -527,6 +566,8 @@ ALL_STREAMS = [
     PROJECTBOARD,
     EPICS,
     SPRINTS,
+    BACKLOG,
+    BOARD_CONFIGURATION,
 ]
 
 ALL_STREAM_IDS = [s.tap_stream_id for s in ALL_STREAMS]
@@ -557,7 +598,9 @@ def validate_dependencies():
         for child, label in [(ISSUEBOARD, "Board Issues"),
                              (PROJECTBOARD, "Board Projects"),
                              (EPICS, "Epics"),
-                             (SPRINTS, "Sprints")]:
+                             (SPRINTS, "Sprints"),
+                             (BACKLOG, "Backlog"),
+                             (BOARD_CONFIGURATION, "Board Configuration")]:
             if child.tap_stream_id in selected:
                 errs.append(msg_tmpl.format(label, "Boards"))
     if errs:

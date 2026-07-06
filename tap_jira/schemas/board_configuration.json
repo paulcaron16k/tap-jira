@@ -1,0 +1,126 @@
+{
+  "title": "Board Configuration",
+  "type": ["null", "object"],
+  "properties": {
+    "id": {
+      "type": ["null", "integer"]
+    },
+    "boardId": {
+      "type": ["null", "integer"]
+    },
+    "name": {
+      "type": ["null", "string"]
+    },
+    "type": {
+      "type": ["null", "string"]
+    },
+    "self": {
+      "type": ["null", "string"]
+    },
+    "location": {
+      "type": ["null", "object"],
+      "properties": {
+        "type": {
+          "type": ["null", "string"]
+        },
+        "key": {
+          "type": ["null", "string"]
+        },
+        "id": {
+          "type": ["null", "string"]
+        },
+        "self": {
+          "type": ["null", "string"]
+        },
+        "name": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "filter": {
+      "type": ["null", "object"],
+      "properties": {
+        "id": {
+          "type": ["null", "string"]
+        },
+        "self": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "subQuery": {
+      "type": ["null", "object"],
+      "properties": {
+        "query": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "columnConfig": {
+      "type": ["null", "object"],
+      "properties": {
+        "constraintType": {
+          "type": ["null", "string"]
+        },
+        "columns": {
+          "type": ["null", "array"],
+          "items": {
+            "type": ["null", "object"],
+            "properties": {
+              "name": {
+                "type": ["null", "string"]
+              },
+              "min": {
+                "type": ["null", "integer"]
+              },
+              "max": {
+                "type": ["null", "integer"]
+              },
+              "statuses": {
+                "type": ["null", "array"],
+                "items": {
+                  "type": ["null", "object"],
+                  "properties": {
+                    "id": {
+                      "type": ["null", "string"]
+                    },
+                    "self": {
+                      "type": ["null", "string"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "estimation": {
+      "type": ["null", "object"],
+      "properties": {
+        "type": {
+          "type": ["null", "string"]
+        },
+        "field": {
+          "type": ["null", "object"],
+          "properties": {
+            "fieldId": {
+              "type": ["null", "string"]
+            },
+            "displayName": {
+              "type": ["null", "string"]
+            }
+          }
+        }
+      }
+    },
+    "ranking": {
+      "type": ["null", "object"],
+      "properties": {
+        "rankCustomFieldId": {
+          "type": ["null", "integer"]
+        }
+      }
+    }
+  }
+}
