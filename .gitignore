@@ -107,3 +107,11 @@ todo.org
 
 # Leftover OAuth credential dump (no longer written; ignore any stale copy)
 local_storage.json
+# CLI test tooling artifacts (test_config.json has a token; the rest are generated)
+test_config.json
+jira_source_catalog.json
+jira_bronze_catalog.json
+records.jsonl
+records2.jsonl
+state.json
+tap-fetch.log
