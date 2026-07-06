@@ -9,7 +9,9 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"   # tools/
 REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 cd "$REPO_ROOT"
-python3 -m venv venv/tap-jira
+if [ ! -d venv/tap-jira ]; then
+    python3 -m venv venv/tap-jira
+fi
 . venv/tap-jira/bin/activate
 pip install -e .            # or: make venv
 

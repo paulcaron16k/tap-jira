@@ -43,7 +43,16 @@ jq --argjson want "$WANT" '
   ' "$SRC" > "$BRONZE"
 
 echo ""
-echo "Created $BRONZE - streams selected for extraction:"
+echo "Created $BRONZE :"
+echo "Streams not selected:"
+# A discovered stream that isn't in WANT has no "selected" key at all (not
+# selected==false), so match "no breadcrumb-[] entry with selected==true".
+jq -r '.streams[]
+       | select(any(.metadata[]; .breadcrumb==[] and .metadata.selected==true) | not)
+       | "  * " + .tap_stream_id' "$BRONZE"
+
+echo ""
+echo "Streams selected for extraction:"
 jq -r '.streams[]
        | select(any(.metadata[]; .breadcrumb==[] and .metadata.selected==true))
        | "  * " + .tap_stream_id' "$BRONZE"
