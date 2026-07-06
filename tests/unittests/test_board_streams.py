@@ -29,37 +29,37 @@ class TestBacklogAndBoardConfiguration(unittest.TestCase):
             streams.BOARDS.sync()
         return written
 
-    def test_backlog_tagged_with_board_id(self):
+    def test_board_backlog_tagged_with_board_id(self):
         side_effect = [
             board_list({"id": 10}),
-            issues_page({"id": 100, "key": "A-1"}, {"id": 101, "key": "A-2"}),  # backlog
+            issues_page({"id": 100, "key": "A-1"}, {"id": 101, "key": "A-2"}),  # board_backlog
         ]
-        written = self.run_sync(side_effect, {"boards", "backlog"})
-        backlog = [r for sid, recs in written if sid == "backlog" for r in recs]
-        self.assertEqual(2, len(backlog))
-        self.assertTrue(all(r["boardId"] == 10 for r in backlog))
+        written = self.run_sync(side_effect, {"boards", "board_backlog"})
+        board_backlog = [r for sid, recs in written if sid == "board_backlog" for r in recs]
+        self.assertEqual(2, len(board_backlog))
+        self.assertTrue(all(r["boardId"] == 10 for r in board_backlog))
 
-    def test_board_configuration_single_object_tagged(self):
+    def test_board_configurations_single_object_tagged(self):
         config = {"id": 10, "name": "Board 10", "type": "scrum",
                   "columnConfig": {"columns": [{"name": "To Do", "statuses": [{"id": "1"}]}]}}
         side_effect = [board_list({"id": 10}), config]
-        written = self.run_sync(side_effect, {"boards", "board_configuration"})
+        written = self.run_sync(side_effect, {"boards", "board_configurations"})
 
-        cfg_pages = [recs for sid, recs in written if sid == "board_configuration"]
+        cfg_pages = [recs for sid, recs in written if sid == "board_configurations"]
         self.assertEqual(1, len(cfg_pages))          # written as a one-item page
         self.assertEqual(1, len(cfg_pages[0]))
         self.assertEqual(10, cfg_pages[0][0]["boardId"])
 
-    def test_board_configuration_skipped_on_error(self):
+    def test_board_configurations_skipped_on_error(self):
         for exc in (JiraBadRequestError("400"), JiraNotFoundError("404")):
             with self.subTest(exc=type(exc).__name__):
                 side_effect = [board_list({"id": 10}), exc]
-                written = self.run_sync(side_effect, {"boards", "board_configuration"})
-                self.assertNotIn("board_configuration",
+                written = self.run_sync(side_effect, {"boards", "board_configurations"})
+                self.assertNotIn("board_configurations",
                                  {sid for sid, _ in written})
 
     def test_unselected_board_config_makes_no_request(self):
-        # Only boards selected: no backlog/config calls beyond the board listing.
+        # Only boards selected: no board_backlog/config calls beyond the board listing.
         self.run_sync([board_list({"id": 10})], {"boards"})
         self.assertEqual(1, Context.client.request.call_count)
 
@@ -73,16 +73,16 @@ class TestBoardChildDependencies(unittest.TestCase):
                                side_effect=lambda sid: sid in selected):
             streams.validate_dependencies()
 
-    def test_backlog_and_config_require_boards(self):
+    def test_board_backlog_and_config_require_boards(self):
         with self.assertRaises(streams.DependencyException) as ctx:
-            self.validate_with_selected({"backlog", "board_configuration"})
+            self.validate_with_selected({"board_backlog", "board_configurations"})
         msg = str(ctx.exception)
         self.assertIn("Backlog", msg)
         self.assertIn("Board Configuration", msg)
         self.assertIn("Boards", msg)
 
     def test_ok_when_boards_selected(self):
-        self.validate_with_selected({"boards", "backlog", "board_configuration"})
+        self.validate_with_selected({"boards", "board_backlog", "board_configurations"})
 
 
 if __name__ == "__main__":

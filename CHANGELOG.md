@@ -1,5 +1,8 @@
 # Changelog
 
+## [v3.5.0]
+  * Rename streams for consistency: `fields`->`issue_fields`, `statuses`->`workflow_statuses`, `issue_board`->`board_issues`, `project_board`->`board_projects`, `backlog`->`board_backlog`, `board_configuration`->`board_configurations`.
+
 ## [v3.4.0]
   * Add board-scoped `backlog` (issues not yet in a sprint) and `board_configuration` (column-to-status mapping, estimation field, rank field) streams, synced within the `boards` stream.
 

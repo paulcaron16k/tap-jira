@@ -33,7 +33,7 @@ echo "Discovered the entire Jira source catalog - all streams"
 #   - versions, components                          -> require projects
 #   - changelogs, issue_comments, issue_transitions -> require issues
 #   - issue_board, project_board, epics, sprints    -> require boards
-WANT='["projects","issues","changelogs","issue_transitions","boards","epics","sprints","project_board","issue_board"]'
+WANT='["projects","issues","changelogs","issue_transitions","boards","epics","sprints","board_projects","board_issues"]'
 
 jq --argjson want "$WANT" '
     .streams |= map(

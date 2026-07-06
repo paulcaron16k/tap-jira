@@ -115,3 +115,6 @@ records.jsonl
 records2.jsonl
 state.json
 tap-fetch.log
+
+# editor swap files
+*.swp

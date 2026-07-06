@@ -10,12 +10,12 @@ This tap:
   API](https://docs.atlassian.com/jira/REST/cloud/#api/2/)
 - Extracts the following resources:
   - [`boards`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-other-operations/#api-agile-1-0-board-get)
-  - [`issue_board`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-issue-get)
-  - [`project_board`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-project-get)
+  - [`board_issues`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-issue-get)
+  - [`board_projects`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-project-get)
   - [`epics`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-epic-get)
   - [`sprints`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-sprint-get)
-  - [`backlog`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-backlog-get)
-  - [`board_configuration`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-configuration-get)
+  - [`board_backlog`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-backlog-get)
+  - [`board_configurations`](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/#api-agile-1-0-board-boardid-configuration-get)
   - [`projects`](https://docs.atlassian.com/jira/REST/cloud/#api/2/project-getAllProjects)
   - [`versions`](https://docs.atlassian.com/jira/REST/cloud/#api/2/project-getProjectVersionsPaginated)
   - [`project_types`](https://docs.atlassian.com/jira/REST/cloud/#api/2/project/type-getAllProjectTypes)
@@ -27,8 +27,8 @@ This tap:
   - [`issue_comments`](https://docs.atlassian.com/jira/REST/cloud/#api/2/search-search)
   - [`issue_transitions`](https://docs.atlassian.com/jira/REST/cloud/#api/2/search-search)  
   - [`worklogs`](https://docs.atlassian.com/jira/REST/cloud/#api/2/worklog-getWorklogsForIds)
-  - [`fields`](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-fields/#api-rest-api-2-field-get)
-  - [`statuses`](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-workflow-statuses/#api-rest-api-2-status-get)
+  - [`issue_fields`](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-fields/#api-rest-api-2-field-get)
+  - [`workflow_statuses`](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-workflow-statuses/#api-rest-api-2-status-get)
 - Outputs the schema for each resource
 - Incrementally pulls data based on the input state
 

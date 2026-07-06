@@ -23,31 +23,31 @@ class TestReferenceStreams(unittest.TestCase):
         return written
 
     def test_fields_stream(self):
-        st = get_stream("fields")
+        st = get_stream("issue_fields")
         self.assertEqual(["id"], st.pk_fields)
         self.assertEqual("/rest/api/2/field", st.path)
         self.assertEqual("FULL_TABLE", st.forced_replication_method)
 
         payload = [{"id": "customfield_10016", "name": "Story Points", "custom": True}]
-        written = self._run("fields", payload)
-        Context.client.request.assert_called_once_with("fields", "GET", "/rest/api/2/field")
+        written = self._run("issue_fields", payload)
+        Context.client.request.assert_called_once_with("issue_fields", "GET", "/rest/api/2/field")
         self.assertEqual([payload], written)
 
     def test_statuses_stream(self):
-        st = get_stream("statuses")
+        st = get_stream("workflow_statuses")
         self.assertEqual(["id"], st.pk_fields)
         self.assertEqual("/rest/api/2/status", st.path)
 
         payload = [{"id": "10000", "name": "To Do",
                     "statusCategory": {"key": "new", "name": "To Do"}}]
-        written = self._run("statuses", payload)
-        Context.client.request.assert_called_once_with("statuses", "GET", "/rest/api/2/status")
+        written = self._run("workflow_statuses", payload)
+        Context.client.request.assert_called_once_with("workflow_statuses", "GET", "/rest/api/2/status")
         self.assertEqual([payload], written)
 
     def test_reference_streams_have_no_parent_dependency(self):
         # They are independent top-level streams; validate_dependencies must not
         # require anything for them.
-        for name in ("fields", "statuses"):
+        for name in ("issue_fields", "workflow_statuses"):
             self.assertIsNone(get_stream(name).parent_tap_stream_id)
 
 

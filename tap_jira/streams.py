@@ -457,11 +457,11 @@ class Boards(Stream):
     def sync_board_children(self, board_id):
         # (child stream, path template, items key in the API response)
         children = [
-            (ISSUEBOARD, "/rest/agile/1.0/board/{}/issue", "issues"),
-            (PROJECTBOARD, "/rest/agile/1.0/board/{}/project", "values"),
+            (BOARD_ISSUES, "/rest/agile/1.0/board/{}/issue", "issues"),
+            (BOARD_PROJECTS, "/rest/agile/1.0/board/{}/project", "values"),
             (EPICS, "/rest/agile/1.0/board/{}/epic", "values"),
             (SPRINTS, "/rest/agile/1.0/board/{}/sprint", "values"),
-            (BACKLOG, "/rest/agile/1.0/board/{}/backlog", "issues"),
+            (BOARD_BACKLOG, "/rest/agile/1.0/board/{}/backlog", "issues"),
         ]
         for stream, path_tmpl, items_key in children:
             if Context.is_selected(stream.tap_stream_id):
@@ -490,11 +490,11 @@ class Boards(Stream):
     def sync_board_configuration(board_id):
         # Board configuration is a single object (not a paginated list), so it
         # can't go through sync_board_child; wrap it in a one-item page instead.
-        if not Context.is_selected(BOARD_CONFIGURATION.tap_stream_id):
+        if not Context.is_selected(BOARD_CONFIGURATIONS.tap_stream_id):
             return
         try:
             config = Context.client.request(
-                BOARD_CONFIGURATION.tap_stream_id, "GET",
+                BOARD_CONFIGURATIONS.tap_stream_id, "GET",
                 "/rest/agile/1.0/board/{}/configuration".format(board_id))
         except (JiraBadRequestError, JiraNotFoundError):
             LOGGER.info('Skipping configuration for board %s: not available for this board type',
@@ -503,7 +503,7 @@ class Boards(Stream):
         # Foreign key back to the parent board (config.id already equals the
         # board id, but tag boardId too for consistency with the other children).
         config["boardId"] = board_id
-        BOARD_CONFIGURATION.write_page([config])
+        BOARD_CONFIGURATIONS.write_page([config])
 
 
 
@@ -518,22 +518,22 @@ ISSUE_TRANSITIONS = Stream("issue_transitions", ["id","issueId"], # Composite pr
 CHANGELOGS = Stream("changelogs", ["id"], parent_tap_stream_id="issues", indirect_stream=True, forced_replication_method="INCREMENTAL")
 WORKLOGS = Worklogs("worklogs", ["id"], forced_replication_method="INCREMENTAL")
 
-# Agile API streams. Boards is a top-level stream; issue_board, project_board,
+# Agile API streams. Boards is a top-level stream; board_issues, board_projects,
 # epics and sprints are board-scoped children synced within Boards.sync (the
 # same way versions and components are synced within Projects.sync). Each
 # child uses a composite primary key of [id, boardId] because the same
 # resource can appear on more than one board.
 BOARDS = Boards("boards", ["id"], forced_replication_method="FULL_TABLE")
-ISSUEBOARD = Stream("issue_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
-PROJECTBOARD = Stream("project_board", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+BOARD_ISSUES = Stream("board_issues", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+BOARD_PROJECTS = Stream("board_projects", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 EPICS = Stream("epics", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 SPRINTS = Stream("sprints", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
-# Board backlog: issues not yet assigned to a sprint. Paginated issue list like
-# issue_board, synced via sync_board_child.
-BACKLOG = Stream("backlog", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+# Board backlog: the set of board issues that are not in an active sprint.
+# Paginated issue list like board_issues, synced via sync_board_child.
+BOARD_BACKLOG = Stream("board_backlog", ["id", "boardId"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 # Board configuration: column -> status mapping, estimation field, rank field.
 # A single object per board (id == board id), synced via sync_board_configuration.
-BOARD_CONFIGURATION = Stream("board_configuration", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
+BOARD_CONFIGURATIONS = Stream("board_configurations", ["id"], parent_tap_stream_id="boards", indirect_stream=True, forced_replication_method="FULL_TABLE")
 
 ALL_STREAMS = [
     PROJECTS,
@@ -552,22 +552,22 @@ ALL_STREAMS = [
     # Field definitions map custom-field ids (e.g. customfield_10016) to names
     # and types - needed to interpret agile fields like Story Points / Sprint /
     # Epic Link. PERMISSIONS: none beyond access to Jira (any authenticated user).
-    Stream("fields", ["id"], path="/rest/api/2/field", forced_replication_method="FULL_TABLE"),
+    Stream("issue_fields", ["id"], path="/rest/api/2/field", forced_replication_method="FULL_TABLE"),
     # Global workflow statuses and their status categories (To Do / In Progress /
     # Done). PERMISSIONS: none beyond access to Jira (any authenticated user).
-    Stream("statuses", ["id"], path="/rest/api/2/status", forced_replication_method="FULL_TABLE"),
+    Stream("workflow_statuses", ["id"], path="/rest/api/2/status", forced_replication_method="FULL_TABLE"),
     ISSUES,
     ISSUE_COMMENTS,
     CHANGELOGS,
     ISSUE_TRANSITIONS,
     WORKLOGS,
     BOARDS,
-    ISSUEBOARD,
-    PROJECTBOARD,
+    BOARD_ISSUES,
+    BOARD_PROJECTS,
     EPICS,
     SPRINTS,
-    BACKLOG,
-    BOARD_CONFIGURATION,
+    BOARD_BACKLOG,
+    BOARD_CONFIGURATIONS,
 ]
 
 ALL_STREAM_IDS = [s.tap_stream_id for s in ALL_STREAMS]
@@ -595,12 +595,12 @@ def validate_dependencies():
         if ISSUE_TRANSITIONS.tap_stream_id in selected:
             errs.append(msg_tmpl.format("Issue Transitions", "Issues"))
     if BOARDS.tap_stream_id not in selected:
-        for child, label in [(ISSUEBOARD, "Board Issues"),
-                             (PROJECTBOARD, "Board Projects"),
+        for child, label in [(BOARD_ISSUES, "Board Issues"),
+                             (BOARD_PROJECTS, "Board Projects"),
                              (EPICS, "Epics"),
                              (SPRINTS, "Sprints"),
-                             (BACKLOG, "Backlog"),
-                             (BOARD_CONFIGURATION, "Board Configuration")]:
+                             (BOARD_BACKLOG, "Backlog"),
+                             (BOARD_CONFIGURATIONS, "Board Configuration")]:
             if child.tap_stream_id in selected:
                 errs.append(msg_tmpl.format(label, "Boards"))
     if errs:

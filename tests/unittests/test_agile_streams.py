@@ -46,8 +46,8 @@ class TestBoardsSync(unittest.TestCase):
         side_effect = [
             board_list({"id": 10}, {"id": 20}),          # board listing
             # board 10
-            issues_page({"id": 100, "key": "A-1"}),      # issue_board
-            values_page({"id": 200, "key": "PA"}),       # project_board
+            issues_page({"id": 100, "key": "A-1"}),      # board_issues
+            values_page({"id": 200, "key": "PA"}),       # board_projects
             values_page({"id": 300, "name": "Epic A"}),  # epics
             values_page({"id": 400, "name": "Sprint 1"}),  # sprints
             # board 20
@@ -56,7 +56,7 @@ class TestBoardsSync(unittest.TestCase):
             values_page({"id": 301, "name": "Epic B"}),
             values_page({"id": 401, "name": "Sprint 2"}),
         ]
-        selected = {"boards", "issue_board", "project_board", "epics", "sprints"}
+        selected = {"boards", "board_issues", "board_projects", "epics", "sprints"}
         written = self.run_sync(side_effect, selected)
 
         # Boards themselves are written once and never carry a boardId
@@ -65,7 +65,7 @@ class TestBoardsSync(unittest.TestCase):
         self.assertNotIn("boardId", boards_pages[0][0])
 
         # Each child record is tagged with the id of the board it came under
-        for sid in ("issue_board", "project_board", "epics", "sprints"):
+        for sid in ("board_issues", "board_projects", "epics", "sprints"):
             recs = [r for s, recs in written if s == sid for r in recs]
             self.assertEqual(2, len(recs), "expected one record per board for %s" % sid)
             self.assertEqual({10, 20}, {r["boardId"] for r in recs})
@@ -75,19 +75,19 @@ class TestBoardsSync(unittest.TestCase):
         is swallowed so the rest of the sync continues."""
         side_effect = [
             board_list({"id": 10}),
-            issues_page({"id": 100, "key": "A-1"}),        # issue_board OK
-            JiraBadRequestError("HTTP-error-code: 400"),   # project_board 400
+            issues_page({"id": 100, "key": "A-1"}),        # board_issues OK
+            JiraBadRequestError("HTTP-error-code: 400"),   # board_projects 400
             values_page({"id": 300, "name": "Epic A"}),    # epics OK
             JiraBadRequestError("HTTP-error-code: 400"),   # sprints 400
         ]
-        selected = {"boards", "issue_board", "project_board", "epics", "sprints"}
+        selected = {"boards", "board_issues", "board_projects", "epics", "sprints"}
         written = self.run_sync(side_effect, selected)
 
         written_ids = {sid for sid, _ in written}
-        self.assertIn("issue_board", written_ids)
+        self.assertIn("board_issues", written_ids)
         self.assertIn("epics", written_ids)
         # The two streams that returned 400 emit nothing but don't abort the sync
-        self.assertNotIn("project_board", written_ids)
+        self.assertNotIn("board_projects", written_ids)
         self.assertNotIn("sprints", written_ids)
 
     def test_unselected_children_are_not_requested(self):
@@ -120,7 +120,7 @@ class TestAgileDependencyValidation(unittest.TestCase):
     def test_board_children_ok_when_boards_selected(self):
         # Should not raise
         self.validate_with_selected({"boards", "sprints", "epics",
-                                     "issue_board", "project_board"})
+                                     "board_issues", "board_projects"})
 
 
 if __name__ == "__main__":
