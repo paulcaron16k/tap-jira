@@ -515,8 +515,20 @@ ALL_STREAMS = [
     ProjectTypes("project_types", ["key"], forced_replication_method="FULL_TABLE"),
     Stream("project_categories", ["id"], path="/rest/api/2/projectCategory", forced_replication_method="FULL_TABLE"),
     Stream("resolutions", ["id"], path="/rest/api/2/resolution", forced_replication_method="FULL_TABLE"),
+    # PERMISSIONS: listing all global project roles requires the "Administer
+    # Jira" global permission; a non-admin token gets 403 here.
     Stream("roles", ["id"], path="/rest/api/2/role", forced_replication_method="FULL_TABLE"),
+    # PERMISSIONS: enumerating users via /group/member requires the "Browse
+    # users and groups" global permission. Issues can be fetchable by a normal
+    # user while this stream 403s for the same token.
     Users("users", ["accountId"], forced_replication_method="FULL_TABLE"),
+    # Field definitions map custom-field ids (e.g. customfield_10016) to names
+    # and types - needed to interpret agile fields like Story Points / Sprint /
+    # Epic Link. PERMISSIONS: none beyond access to Jira (any authenticated user).
+    Stream("fields", ["id"], path="/rest/api/2/field", forced_replication_method="FULL_TABLE"),
+    # Global workflow statuses and their status categories (To Do / In Progress /
+    # Done). PERMISSIONS: none beyond access to Jira (any authenticated user).
+    Stream("statuses", ["id"], path="/rest/api/2/status", forced_replication_method="FULL_TABLE"),
     ISSUES,
     ISSUE_COMMENTS,
     CHANGELOGS,

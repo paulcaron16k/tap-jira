@@ -1,0 +1,72 @@
+{
+  "title": "Field",
+  "type": ["null", "object"],
+  "properties": {
+    "id": {
+      "type": ["null", "string"]
+    },
+    "key": {
+      "type": ["null", "string"]
+    },
+    "name": {
+      "type": ["null", "string"]
+    },
+    "untranslatedName": {
+      "type": ["null", "string"]
+    },
+    "custom": {
+      "type": ["null", "boolean"]
+    },
+    "orderable": {
+      "type": ["null", "boolean"]
+    },
+    "navigable": {
+      "type": ["null", "boolean"]
+    },
+    "searchable": {
+      "type": ["null", "boolean"]
+    },
+    "clauseNames": {
+      "type": ["null", "array"],
+      "items": {
+        "type": ["null", "string"]
+      }
+    },
+    "scope": {
+      "type": ["null", "object"],
+      "properties": {
+        "type": {
+          "type": ["null", "string"]
+        },
+        "project": {
+          "type": ["null", "object"],
+          "properties": {
+            "id": {
+              "type": ["null", "string"]
+            }
+          }
+        }
+      }
+    },
+    "schema": {
+      "type": ["null", "object"],
+      "properties": {
+        "type": {
+          "type": ["null", "string"]
+        },
+        "items": {
+          "type": ["null", "string"]
+        },
+        "system": {
+          "type": ["null", "string"]
+        },
+        "custom": {
+          "type": ["null", "string"]
+        },
+        "customId": {
+          "type": ["null", "integer"]
+        }
+      }
+    }
+  }
+}

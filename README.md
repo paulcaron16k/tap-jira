@@ -25,6 +25,8 @@ This tap:
   - [`issue_comments`](https://docs.atlassian.com/jira/REST/cloud/#api/2/search-search)
   - [`issue_transitions`](https://docs.atlassian.com/jira/REST/cloud/#api/2/search-search)  
   - [`worklogs`](https://docs.atlassian.com/jira/REST/cloud/#api/2/worklog-getWorklogsForIds)
+  - [`fields`](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-fields/#api-rest-api-2-field-get)
+  - [`statuses`](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-workflow-statuses/#api-rest-api-2-status-get)
 - Outputs the schema for each resource
 - Incrementally pulls data based on the input state
 
