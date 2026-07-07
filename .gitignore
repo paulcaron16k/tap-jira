@@ -109,6 +109,7 @@ todo.org
 local_storage.json
 # CLI test tooling artifacts (test_config.json has a token; the rest are generated)
 test_config.json
+test_config_*.json
 jira_source_catalog.json
 jira_bronze_catalog.json
 jira_bronze_master_data_catalog.json
