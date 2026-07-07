@@ -14,3 +14,9 @@ class TestUserDateTransform(unittest.TestCase):
         for actual_test_date, expected_test_date in TEST_SET.items():
             self.assertEqual(transform_user_date(actual_test_date), expected_test_date)
 
+    def test_unparseable_or_empty_returns_none(self):
+        """Unparseable / empty / None dates return null instead of crashing on
+        None.strftime (dateparser.parse returns None for values it can't parse)."""
+        for bad in (None, "", "not a date", "13/xyz/2022"):
+            self.assertIsNone(transform_user_date(bad))
+

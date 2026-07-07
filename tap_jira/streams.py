@@ -617,4 +617,13 @@ def transform_user_date(user_date):
     All the locales are supported except following below locales,
     Chinese, Italia, Japanese, Korean, Polska, Brasil.
     """
-    return dateparser.parse(user_date).strftime('%Y-%m-%d')
+    if not user_date:
+        return None
+    # dateparser.parse returns None for values it can't parse (e.g. an
+    # unsupported locale) - fall back to null rather than crashing on
+    # None.strftime. The field is nullable in the schema.
+    parsed = dateparser.parse(user_date)
+    if parsed is None:
+        LOGGER.warning("Could not parse user date %r; emitting null", user_date)
+        return None
+    return parsed.strftime('%Y-%m-%d')
